@@ -38,6 +38,7 @@ class Homevolt:
         """Fetch and update device information."""
         if self._device is None:
             await self._ensure_session()
+            assert self._websession is not None
             self._device = Device(
                 ip_address=self._ip_address,
                 password=self._password,

@@ -5,7 +5,7 @@ from .exceptions import (
     HomevoltAuthenticationError,
     HomevoltConnectionError,
     HomevoltDataError,
-    HomevoltException,
+    HomevoltError,
 )
 from .homevolt import Homevolt
 from .models import DeviceMetadata, Sensor, SensorType
@@ -17,7 +17,7 @@ __all__ = [
     "HomevoltAuthenticationError",
     "HomevoltConnectionError",
     "HomevoltDataError",
-    "HomevoltException",
+    "HomevoltError",
     "Sensor",
     "SensorType",
 ]

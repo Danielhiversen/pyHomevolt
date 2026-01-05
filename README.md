@@ -147,7 +147,7 @@ Enumeration of sensor types:
 
 ### Exceptions
 
-- `HomevoltException`: Base exception for all Homevolt errors
+- `HomevoltError`: Base exception for all Homevolt errors
 - `HomevoltConnectionError`: Connection or network errors
 - `HomevoltAuthenticationError`: Authentication failures
 - `HomevoltDataError`: Data parsing errors
