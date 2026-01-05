@@ -23,4 +23,3 @@ class HomevoltDataError(HomevoltError):
     """Raised when there's an error parsing or processing data."""
 
     pass
-

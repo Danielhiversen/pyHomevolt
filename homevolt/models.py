@@ -40,4 +40,3 @@ class Sensor:
     value: float | str | None
     type: SensorType
     device_identifier: str = "main"  # Device identifier for grouping sensors into devices
-

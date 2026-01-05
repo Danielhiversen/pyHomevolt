@@ -80,4 +80,3 @@ class Homevolt:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Async context manager exit."""
         await self.close_connection()
-

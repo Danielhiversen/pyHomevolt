@@ -30,7 +30,7 @@ async def main():
             websession=session,
         )
         await homevolt_connection.update_info()
-        
+
         device = homevolt_connection.get_device()
         print(f"Device ID: {device.device_id}")
         print(f"Current Power: {device.sensors['Power'].value} W")

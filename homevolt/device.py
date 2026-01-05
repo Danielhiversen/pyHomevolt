@@ -304,7 +304,11 @@ class Device:
             device_identifier=ems_device_id,
         )
 
-        schedule = schedule_data.get("schedule", [{}])[0] if schedule_data.get("schedule") else {"type": -1, "params": {}}
+        schedule = (
+            schedule_data.get("schedule", [{}])[0]
+            if schedule_data.get("schedule")
+            else {"type": -1, "params": {}}
+        )
 
         self.sensors["Schedule Type"] = Sensor(
             value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
@@ -326,4 +330,3 @@ class Device:
             type=SensorType.POWER,
             device_identifier=ems_device_id,
         )
-
