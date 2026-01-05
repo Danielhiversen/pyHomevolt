@@ -20,4 +20,3 @@ DEVICE_MAP = {
     "load": "load",
     "house": "load",
 }
-

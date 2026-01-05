@@ -35,15 +35,15 @@ async def main():
         print(f"Device ID: {device.device_id}")
         print(f"Current Power: {device.sensors['Power'].value} W")
         print(f"Battery SOC: {device.sensors['Battery State of Charge'].value * 100}%")
-        
+
         # Access all sensors
         for sensor_name, sensor in device.sensors.items():
             print(f"{sensor_name}: {sensor.value} ({sensor.type.value})")
-        
+
         # Access device metadata
         for device_id, metadata in device.device_metadata.items():
             print(f"{device_id}: {metadata.name} ({metadata.model})")
-        
+
         await homevolt_connection.close_connection()
 
 
@@ -67,10 +67,10 @@ async def main():
             websession=session,
         ) as homevolt_connection:
             await homevolt_connection.update_info()
-            
+
             device = homevolt_connection.get_device()
             await device.update_info()  # Refresh data
-            
+
             print(f"Device ID: {device.device_id}")
             print(f"Available sensors: {list(device.sensors.keys())}")
 
