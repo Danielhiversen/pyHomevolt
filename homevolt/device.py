@@ -210,26 +210,55 @@ class Device:
                 name=f"Homevolt Battery {bat_id}",
                 model="Homevolt Battery",
             )
-            self.sensors[f"Homevolt battery {bat_id}"] = Sensor(
-                value=battery["soc"] / 100,
-                type=SensorType.PERCENTAGE,
-                device_identifier=battery_device_id,
-            )
-            self.sensors[f"Homevolt battery {bat_id} tmin"] = Sensor(
-                value=battery["tmin"] / 10,
-                type=SensorType.TEMPERATURE,
-                device_identifier=battery_device_id,
-            )
-            self.sensors[f"Homevolt battery {bat_id} tmax"] = Sensor(
-                value=battery["tmax"] / 10,
-                type=SensorType.TEMPERATURE,
-                device_identifier=battery_device_id,
-            )
-            self.sensors[f"Homevolt battery {bat_id} charge cycles"] = Sensor(
-                value=battery["cycle_count"],
-                type=SensorType.COUNT,
-                device_identifier=battery_device_id,
-            )
+            if "soc" in battery:
+                self.sensors[f"Homevolt battery {bat_id}"] = Sensor(
+                    value=battery["soc"] / 100,
+                    type=SensorType.PERCENTAGE,
+                    device_identifier=battery_device_id,
+                )
+            if "tmin" in battery:
+                self.sensors[f"Homevolt battery {bat_id} tmin"] = Sensor(
+                    value=battery["tmin"] / 10,
+                    type=SensorType.TEMPERATURE,
+                    device_identifier=battery_device_id,
+                )
+            if "tmax" in battery:
+                self.sensors[f"Homevolt battery {bat_id} tmax"] = Sensor(
+                    value=battery["tmax"] / 10,
+                    type=SensorType.TEMPERATURE,
+                    device_identifier=battery_device_id,
+                )
+            if "cycle_count" in battery:
+                self.sensors[f"Homevolt battery {bat_id} charge cycles"] = Sensor(
+                    value=battery["cycle_count"],
+                    type=SensorType.COUNT,
+                    device_identifier=battery_device_id,
+                )
+            if "voltage" in battery:
+                voltage = battery["voltage"]
+                self.sensors[f"Homevolt battery {bat_id} voltage"] = Sensor(
+                    value=voltage / 100 if isinstance(voltage, (int, float)) and voltage > 100 else voltage,
+                    type=SensorType.VOLTAGE,
+                    device_identifier=battery_device_id,
+                )
+            if "current" in battery:
+                self.sensors[f"Homevolt battery {bat_id} current"] = Sensor(
+                    value=battery["current"],
+                    type=SensorType.CURRENT,
+                    device_identifier=battery_device_id,
+                )
+            if "power" in battery:
+                self.sensors[f"Homevolt battery {bat_id} power"] = Sensor(
+                    value=battery["power"],
+                    type=SensorType.POWER,
+                    device_identifier=battery_device_id,
+                )
+            if "soh" in battery:
+                self.sensors[f"Homevolt battery {bat_id} soh"] = Sensor(
+                    value=battery["soh"] / 100 if isinstance(battery["soh"], (int, float)) and battery["soh"] > 1 else battery["soh"],
+                    type=SensorType.PERCENTAGE,
+                    device_identifier=battery_device_id,
+                )
 
         # External sensors (grid, solar, load)
         for sensor in ems_data.get("sensors", []):
