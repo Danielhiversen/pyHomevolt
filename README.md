@@ -120,7 +120,7 @@ async def main():
             from datetime import datetime, timedelta
             tonight = datetime.now().replace(hour=23, minute=0, second=0)
             tomorrow = (tonight + timedelta(days=1)).replace(hour=7, minute=0, second=0)
-            
+
             await device.add_schedule(
                 mode=1,  # Inverter Charge
                 from_time=tonight.isoformat(),
