@@ -7,7 +7,14 @@ from typing import Any
 
 import aiohttp
 
-from .const import DEVICE_MAP, ENDPOINT_EMS, ENDPOINT_SCHEDULE, SCHEDULE_TYPE
+from .const import (
+    DEVICE_MAP,
+    ENDPOINT_CONSOLE,
+    ENDPOINT_EMS,
+    ENDPOINT_PARAMS,
+    ENDPOINT_SCHEDULE,
+    SCHEDULE_TYPE,
+)
 from .exceptions import (
     HomevoltAuthenticationError,
     HomevoltConnectionError,
@@ -235,9 +242,8 @@ class Device:
                     device_identifier=battery_device_id,
                 )
             if "voltage" in battery:
-                voltage = battery["voltage"]
                 self.sensors[f"Homevolt battery {bat_id} voltage"] = Sensor(
-                    value=voltage / 100 if isinstance(voltage, (int, float)) and voltage > 100 else voltage,
+                    value=battery["voltage"] / 100,
                     type=SensorType.VOLTAGE,
                     device_identifier=battery_device_id,
                 )
@@ -255,7 +261,7 @@ class Device:
                 )
             if "soh" in battery:
                 self.sensors[f"Homevolt battery {bat_id} soh"] = Sensor(
-                    value=battery["soh"] / 100 if isinstance(battery["soh"], (int, float)) and battery["soh"] > 1 else battery["soh"],
+                    value=battery["soh"] / 100,
                     type=SensorType.PERCENTAGE,
                     device_identifier=battery_device_id,
                 )
@@ -358,4 +364,397 @@ class Device:
             value=schedule.get("max_discharge"),
             type=SensorType.POWER,
             device_identifier=ems_device_id,
+        )
+
+    async def _execute_console_command(self, command: str) -> dict[str, Any]:
+        """Execute a console command via the HTTP API.
+
+        Args:
+            command: The console command to execute
+
+        Returns:
+            The JSON response from the console endpoint
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If response parsing fails
+        """
+        try:
+            url = f"http://{self._ip_address}{ENDPOINT_CONSOLE}"
+            async with self._websession.post(
+                url,
+                auth=self._auth,
+                json={"cmd": command},
+            ) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to execute command: {err}") from err
+        except Exception as err:
+            raise HomevoltDataError(f"Failed to parse command response: {err}") from err
+
+    async def set_battery_mode(
+        self,
+        mode: int,
+        *,
+        setpoint: int | None = None,
+        max_charge: int | None = None,
+        max_discharge: int | None = None,
+        min_soc: int | None = None,
+        max_soc: int | None = None,
+        offline: bool = False,
+    ) -> dict[str, Any]:
+        """Set immediate battery control mode.
+
+        Args:
+            mode: Schedule type (0=Idle, 1=Inverter Charge, 2=Inverter Discharge,
+                3=Grid Charge, 4=Grid Discharge, 5=Grid Charge/Discharge,
+                6=Frequency Reserve, 7=Solar Charge, 8=Solar Charge/Discharge,
+                9=Full Solar Export)
+            setpoint: Power setpoint in Watts (for grid modes)
+            max_charge: Maximum charge power in Watts
+            max_discharge: Maximum discharge power in Watts
+            min_soc: Minimum state of charge percentage
+            max_soc: Maximum state of charge percentage
+            offline: Take inverter offline during idle mode
+
+        Returns:
+            Response from the console command
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If command execution fails
+        """
+        if mode not in SCHEDULE_TYPE:
+            raise ValueError(f"Invalid mode: {mode}. Must be 0-9")
+
+        cmd_parts = [f"sched_set {mode}"]
+
+        if setpoint is not None:
+            cmd_parts.append(f"-s {setpoint}")
+        if max_charge is not None:
+            cmd_parts.append(f"-c {max_charge}")
+        if max_discharge is not None:
+            cmd_parts.append(f"-d {max_discharge}")
+        if min_soc is not None:
+            cmd_parts.append(f"--min {min_soc}")
+        if max_soc is not None:
+            cmd_parts.append(f"--max {max_soc}")
+        if offline:
+            cmd_parts.append("-o")
+
+        command = " ".join(cmd_parts)
+        return await self._execute_console_command(command)
+
+    async def add_schedule(
+        self,
+        mode: int,
+        *,
+        from_time: str | None = None,
+        to_time: str | None = None,
+        setpoint: int | None = None,
+        max_charge: int | None = None,
+        max_discharge: int | None = None,
+        min_soc: int | None = None,
+        max_soc: int | None = None,
+        offline: bool = False,
+    ) -> dict[str, Any]:
+        """Add a scheduled battery control entry.
+
+        Args:
+            mode: Schedule type (0=Idle, 1=Inverter Charge, 2=Inverter Discharge,
+                3=Grid Charge, 4=Grid Discharge, 5=Grid Charge/Discharge,
+                6=Frequency Reserve, 7=Solar Charge, 8=Solar Charge/Discharge,
+                9=Full Solar Export)
+            from_time: Start time in ISO format (YYYY-MM-DDTHH:mm:ss)
+            to_time: End time in ISO format (YYYY-MM-DDTHH:mm:ss)
+            setpoint: Power setpoint in Watts (for grid modes)
+            max_charge: Maximum charge power in Watts
+            max_discharge: Maximum discharge power in Watts
+            min_soc: Minimum state of charge percentage
+            max_soc: Maximum state of charge percentage
+            offline: Take inverter offline during idle mode
+
+        Returns:
+            Response from the console command
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If command execution fails
+        """
+        if mode not in SCHEDULE_TYPE:
+            raise ValueError(f"Invalid mode: {mode}. Must be 0-9")
+
+        cmd_parts = [f"sched_add {mode}"]
+
+        if from_time:
+            cmd_parts.append(f"--from {from_time}")
+        if to_time:
+            cmd_parts.append(f"--to {to_time}")
+        if setpoint is not None:
+            cmd_parts.append(f"-s {setpoint}")
+        if max_charge is not None:
+            cmd_parts.append(f"-c {max_charge}")
+        if max_discharge is not None:
+            cmd_parts.append(f"-d {max_discharge}")
+        if min_soc is not None:
+            cmd_parts.append(f"--min {min_soc}")
+        if max_soc is not None:
+            cmd_parts.append(f"--max {max_soc}")
+        if offline:
+            cmd_parts.append("-o")
+
+        command = " ".join(cmd_parts)
+        return await self._execute_console_command(command)
+
+    async def delete_schedule(self, schedule_id: int) -> dict[str, Any]:
+        """Delete a schedule by ID.
+
+        Args:
+            schedule_id: The ID of the schedule to delete
+
+        Returns:
+            Response from the console command
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If command execution fails
+        """
+        return await self._execute_console_command(f"sched_del {schedule_id}")
+
+    async def clear_all_schedules(self) -> dict[str, Any]:
+        """Clear all schedules.
+
+        Returns:
+            Response from the console command
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If command execution fails
+        """
+        return await self._execute_console_command("sched_clear")
+
+    async def enable_local_mode(self) -> dict[str, Any]:
+        """Enable local mode to prevent remote schedule overrides.
+
+        When enabled, remote schedules from Tibber/partners via MQTT will be blocked,
+        and only local schedules will be used.
+
+        Returns:
+            Response from the params endpoint
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If parameter setting fails
+        """
+        return await self.set_parameter("settings_local", 1)
+
+    async def disable_local_mode(self) -> dict[str, Any]:
+        """Disable local mode to allow remote schedule overrides.
+
+        When disabled, remote schedules from Tibber/partners via MQTT will replace
+        local schedules.
+
+        Returns:
+            Response from the params endpoint
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If parameter setting fails
+        """
+        return await self.set_parameter("settings_local", 0)
+
+    async def set_parameter(self, key: str, value: Any) -> dict[str, Any]:
+        """Set a device parameter.
+
+        Args:
+            key: Parameter name
+            value: Parameter value
+
+        Returns:
+            Response from the params endpoint
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If parameter setting fails
+        """
+        try:
+            url = f"http://{self._ip_address}{ENDPOINT_PARAMS}"
+            async with self._websession.post(
+                url,
+                auth=self._auth,
+                json={key: value},
+            ) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                return await response.json()
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to set parameter: {err}") from err
+        except Exception as err:
+            raise HomevoltDataError(f"Failed to parse parameter response: {err}") from err
+
+    async def get_parameter(self, key: str) -> Any:
+        """Get a device parameter value.
+
+        Args:
+            key: Parameter name
+
+        Returns:
+            Parameter value
+
+        Raises:
+            HomevoltConnectionError: If connection fails
+            HomevoltAuthenticationError: If authentication fails
+            HomevoltDataError: If parameter retrieval fails
+        """
+        try:
+            url = f"http://{self._ip_address}{ENDPOINT_PARAMS}"
+            async with self._websession.get(url, auth=self._auth) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                params = await response.json()
+                return params.get(key)
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to get parameter: {err}") from err
+        except Exception as err:
+            raise HomevoltDataError(f"Failed to parse parameter response: {err}") from err
+
+    async def charge_battery(
+        self,
+        *,
+        max_power: int | None = None,
+        max_soc: int | None = None,
+        min_soc: int | None = None,
+    ) -> dict[str, Any]:
+        """Charge battery using inverter (immediate).
+
+        Args:
+            max_power: Maximum charge power in Watts
+            max_soc: Maximum state of charge percentage (stops at this level)
+            min_soc: Minimum state of charge percentage (only charges if below this)
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(
+            1,  # Inverter Charge
+            max_charge=max_power,
+            max_soc=max_soc,
+            min_soc=min_soc,
+        )
+
+    async def discharge_battery(
+        self,
+        *,
+        max_power: int | None = None,
+        min_soc: int | None = None,
+        max_soc: int | None = None,
+    ) -> dict[str, Any]:
+        """Discharge battery using inverter (immediate).
+
+        Args:
+            max_power: Maximum discharge power in Watts
+            min_soc: Minimum state of charge percentage (stops at this level)
+            max_soc: Maximum state of charge percentage (only discharges if above this)
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(
+            2,  # Inverter Discharge
+            max_discharge=max_power,
+            min_soc=min_soc,
+            max_soc=max_soc,
+        )
+
+    async def set_battery_idle(self, *, offline: bool = False) -> dict[str, Any]:
+        """Set battery to idle mode (immediate).
+
+        Args:
+            offline: If True, take inverter offline during idle
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(0, offline=offline)
+
+    async def charge_from_grid(
+        self,
+        *,
+        setpoint: int,
+        max_power: int | None = None,
+        max_soc: int | None = None,
+    ) -> dict[str, Any]:
+        """Charge battery from grid with power setpoint (immediate).
+
+        Args:
+            setpoint: Power setpoint in Watts
+            max_power: Maximum charge power in Watts
+            max_soc: Maximum state of charge percentage
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(
+            3,  # Grid Charge
+            setpoint=setpoint,
+            max_charge=max_power,
+            max_soc=max_soc,
+        )
+
+    async def discharge_to_grid(
+        self,
+        *,
+        setpoint: int,
+        max_power: int | None = None,
+        min_soc: int | None = None,
+    ) -> dict[str, Any]:
+        """Discharge battery to grid with power setpoint (immediate).
+
+        Args:
+            setpoint: Power setpoint in Watts
+            max_power: Maximum discharge power in Watts
+            min_soc: Minimum state of charge percentage
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(
+            4,  # Grid Discharge
+            setpoint=setpoint,
+            max_discharge=max_power,
+            min_soc=min_soc,
+        )
+
+    async def charge_from_solar(
+        self,
+        *,
+        max_power: int | None = None,
+        max_soc: int | None = None,
+    ) -> dict[str, Any]:
+        """Charge battery from solar only (immediate).
+
+        Args:
+            max_power: Maximum charge power in Watts
+            max_soc: Maximum state of charge percentage
+
+        Returns:
+            Response from the console command
+        """
+        return await self.set_battery_mode(
+            7,  # Solar Charge
+            max_charge=max_power,
+            max_soc=max_soc,
         )

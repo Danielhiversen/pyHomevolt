@@ -3,14 +3,20 @@
 # API endpoints
 ENDPOINT_EMS = "/ems.json"
 ENDPOINT_SCHEDULE = "/schedule.json"
+ENDPOINT_CONSOLE = "/console.json"
+ENDPOINT_PARAMS = "/params.json"
 
 SCHEDULE_TYPE = {
     0: "Idle",
-    1: "Charge Setpoint",
-    2: "Discharge Setpoint",
-    3: "Charge Grid Setpoint",
-    4: "Discharge Grid Setpoint",
-    5: "Charge/Discharge Grid Setpoint",
+    1: "Inverter Charge",
+    2: "Inverter Discharge",
+    3: "Grid Charge",
+    4: "Grid Discharge",
+    5: "Grid Charge/Discharge",
+    6: "Frequency Reserve",
+    7: "Solar Charge",
+    8: "Solar Charge/Discharge",
+    9: "Full Solar Export",
 }
 
 # Device type mappings for sensors
