@@ -27,7 +27,7 @@ class Homevolt:
             password: Optional password for authentication
             websession: Optional aiohttp ClientSession. If not provided, one will be created.
         """
-        self._ip_address = ip_address
+        self.ip_address = ip_address
         self._password = password
         self._websession = websession
         self._own_session = websession is None
@@ -40,7 +40,7 @@ class Homevolt:
             await self._ensure_session()
             assert self._websession is not None
             self._device = Device(
-                ip_address=self._ip_address,
+                ip_address=self.ip_address,
                 password=self._password,
                 websession=self._websession,
             )

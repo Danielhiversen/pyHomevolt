@@ -41,7 +41,7 @@ class Device:
             password: Optional password for authentication
             websession: aiohttp ClientSession for making requests
         """
-        self._ip_address = ip_address
+        self.ip_address = ip_address
         self._password = password
         self._websession = websession
         self._auth = aiohttp.BasicAuth("admin", password) if password else None
@@ -59,7 +59,7 @@ class Device:
     async def fetch_ems_data(self) -> None:
         """Fetch EMS data from the device."""
         try:
-            url = f"http://{self._ip_address}{ENDPOINT_EMS}"
+            url = f"http://{self.ip_address}{ENDPOINT_EMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
@@ -75,7 +75,7 @@ class Device:
     async def fetch_schedule_data(self) -> None:
         """Fetch schedule data from the device."""
         try:
-            url = f"http://{self._ip_address}{ENDPOINT_SCHEDULE}"
+            url = f"http://{self.ip_address}{ENDPOINT_SCHEDULE}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
@@ -381,7 +381,7 @@ class Device:
             HomevoltDataError: If response parsing fails
         """
         try:
-            url = f"http://{self._ip_address}{ENDPOINT_CONSOLE}"
+            url = f"http://{self.ip_address}{ENDPOINT_CONSOLE}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -589,7 +589,7 @@ class Device:
             HomevoltDataError: If parameter setting fails
         """
         try:
-            url = f"http://{self._ip_address}{ENDPOINT_PARAMS}"
+            url = f"http://{self.ip_address}{ENDPOINT_PARAMS}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -619,7 +619,7 @@ class Device:
             HomevoltDataError: If parameter retrieval fails
         """
         try:
-            url = f"http://{self._ip_address}{ENDPOINT_PARAMS}"
+            url = f"http://{self.ip_address}{ENDPOINT_PARAMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
