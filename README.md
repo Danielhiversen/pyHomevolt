@@ -17,7 +17,7 @@ Control your battery with:
 ## Install
 
 ```bash
-pip install pyHomevolt
+pip install homevolt
 ```
 
 ## Example
