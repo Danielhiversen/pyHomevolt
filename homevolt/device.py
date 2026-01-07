@@ -41,8 +41,6 @@ class Device:
             password: Optional password for authentication
             websession: aiohttp ClientSession for making requests
         """
-        if not hostname.startswith("http"):
-            hostname = f"http://{hostname}"
         self.hostname = hostname
         self._password = password
         self._websession = websession

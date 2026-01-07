@@ -27,6 +27,8 @@ class Homevolt:
             password: Optional password for authentication
             websession: Optional aiohttp ClientSession. If not provided, one will be created.
         """
+        if not hostname.startswith("http"):
+            hostname = f"http://{hostname}"
         self.hostname = hostname
         self._password = password
         self._websession = websession
