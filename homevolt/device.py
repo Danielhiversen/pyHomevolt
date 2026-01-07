@@ -30,18 +30,20 @@ class Device:
 
     def __init__(
         self,
-        ip_address: str,
+        hostname: str,
         password: str | None,
         websession: aiohttp.ClientSession,
     ) -> None:
         """Initialize the device.
 
         Args:
-            ip_address: IP address of the Homevolt device
+            hostname: Hostname of the Homevolt device
             password: Optional password for authentication
             websession: aiohttp ClientSession for making requests
         """
-        self.ip_address = ip_address
+        if not hostname.startswith("http"):
+            hostname = f"http://{hostname}"
+        self.hostname = hostname
         self._password = password
         self._websession = websession
         self._auth = aiohttp.BasicAuth("admin", password) if password else None
@@ -59,7 +61,7 @@ class Device:
     async def fetch_ems_data(self) -> None:
         """Fetch EMS data from the device."""
         try:
-            url = f"http://{self.ip_address}{ENDPOINT_EMS}"
+            url = f"{self.hostname}{ENDPOINT_EMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
@@ -75,7 +77,7 @@ class Device:
     async def fetch_schedule_data(self) -> None:
         """Fetch schedule data from the device."""
         try:
-            url = f"http://{self.ip_address}{ENDPOINT_SCHEDULE}"
+            url = f"{self.hostname}{ENDPOINT_SCHEDULE}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
