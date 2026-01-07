@@ -383,7 +383,7 @@ class Device:
             HomevoltDataError: If response parsing fails
         """
         try:
-            url = f"http://{self.ip_address}{ENDPOINT_CONSOLE}"
+            url = f"{self.hostname}{ENDPOINT_CONSOLE}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -591,7 +591,7 @@ class Device:
             HomevoltDataError: If parameter setting fails
         """
         try:
-            url = f"http://{self.ip_address}{ENDPOINT_PARAMS}"
+            url = f"{self.hostname}{ENDPOINT_PARAMS}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -621,7 +621,7 @@ class Device:
             HomevoltDataError: If parameter retrieval fails
         """
         try:
-            url = f"http://{self.ip_address}{ENDPOINT_PARAMS}"
+            url = f"{self.hostname}{ENDPOINT_PARAMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
