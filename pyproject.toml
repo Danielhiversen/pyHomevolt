@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "GPL-3.0"}
 authors = [
-    {name = "Your Name", email = "your.email@example.com"},
+    {name = "Daniel Høyer", email = "github@dahoiv.net"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
