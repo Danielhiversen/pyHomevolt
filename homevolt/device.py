@@ -30,18 +30,18 @@ class Device:
 
     def __init__(
         self,
-        hostname: str,
+        base_url: str,
         password: str | None,
         websession: aiohttp.ClientSession,
     ) -> None:
         """Initialize the device.
 
         Args:
-            hostname: Hostname of the Homevolt device
+            base_url: Base URL of the Homevolt device (e.g., http://192.168.1.100)
             password: Optional password for authentication
             websession: aiohttp ClientSession for making requests
         """
-        self.hostname = hostname
+        self.base_url = base_url
         self._password = password
         self._websession = websession
         self._auth = aiohttp.BasicAuth("admin", password) if password else None
@@ -59,7 +59,7 @@ class Device:
     async def fetch_ems_data(self) -> None:
         """Fetch EMS data from the device."""
         try:
-            url = f"{self.hostname}{ENDPOINT_EMS}"
+            url = f"{self.base_url}{ENDPOINT_EMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
@@ -75,7 +75,7 @@ class Device:
     async def fetch_schedule_data(self) -> None:
         """Fetch schedule data from the device."""
         try:
-            url = f"{self.hostname}{ENDPOINT_SCHEDULE}"
+            url = f"{self.base_url}{ENDPOINT_SCHEDULE}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
@@ -116,96 +116,115 @@ class Device:
                     value=ems["ems_voltage"]["l1"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l1_voltage",
                 ),
                 "L2 Voltage": Sensor(
                     value=ems["ems_voltage"]["l2"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l2_voltage",
                 ),
                 "L3 Voltage": Sensor(
                     value=ems["ems_voltage"]["l3"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l3_voltage",
                 ),
                 "L1_L2 Voltage": Sensor(
                     value=ems["ems_voltage"]["l1_l2"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l1_l2_voltage",
                 ),
                 "L2_L3 Voltage": Sensor(
                     value=ems["ems_voltage"]["l2_l3"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l2_l3_voltage",
                 ),
                 "L3_L1 Voltage": Sensor(
                     value=ems["ems_voltage"]["l3_l1"] / 10,
                     type=SensorType.VOLTAGE,
                     device_identifier=ems_device_id,
+                    slug="l3_l1_voltage",
                 ),
                 "L1 Current": Sensor(
                     value=ems["ems_current"]["l1"],
                     type=SensorType.CURRENT,
                     device_identifier=ems_device_id,
+                    slug="l1_current",
                 ),
                 "L2 Current": Sensor(
                     value=ems["ems_current"]["l2"],
                     type=SensorType.CURRENT,
                     device_identifier=ems_device_id,
+                    slug="l2_current",
                 ),
                 "L3 Current": Sensor(
                     value=ems["ems_current"]["l3"],
                     type=SensorType.CURRENT,
                     device_identifier=ems_device_id,
+                    slug="l3_current",
                 ),
                 "System Temperature": Sensor(
                     value=ems["ems_data"]["sys_temp"] / 10.0,
                     type=SensorType.TEMPERATURE,
                     device_identifier=ems_device_id,
+                    slug="system_temperature",
                 ),
                 "Imported Energy": Sensor(
                     value=ems["ems_aggregate"]["imported_kwh"],
                     type=SensorType.ENERGY_INCREASING,
                     device_identifier=ems_device_id,
+                    slug="imported_energy",
                 ),
                 "Exported Energy": Sensor(
                     value=ems["ems_aggregate"]["exported_kwh"],
                     type=SensorType.ENERGY_INCREASING,
                     device_identifier=ems_device_id,
+                    slug="exported_energy",
                 ),
                 "Available Charging Power": Sensor(
                     value=ems["ems_prediction"]["avail_ch_pwr"],
                     type=SensorType.POWER,
                     device_identifier=ems_device_id,
+                    slug="available_charging_power",
                 ),
                 "Available Discharge Power": Sensor(
                     value=ems["ems_prediction"]["avail_di_pwr"],
                     type=SensorType.POWER,
                     device_identifier=ems_device_id,
+                    slug="available_discharge_power",
                 ),
                 "Available Charging Energy": Sensor(
                     value=ems["ems_prediction"]["avail_ch_energy"],
                     type=SensorType.ENERGY_TOTAL,
                     device_identifier=ems_device_id,
+                    slug="available_charging_energy",
                 ),
                 "Available Discharge Energy": Sensor(
                     value=ems["ems_prediction"]["avail_di_energy"],
                     type=SensorType.ENERGY_TOTAL,
                     device_identifier=ems_device_id,
+                    slug="available_discharge_energy",
                 ),
                 "Power": Sensor(
                     value=ems["ems_data"]["power"],
                     type=SensorType.POWER,
                     device_identifier=ems_device_id,
+                    slug="power",
                 ),
                 "Frequency": Sensor(
                     value=ems["ems_data"]["frequency"],
                     type=SensorType.FREQUENCY,
                     device_identifier=ems_device_id,
+                    slug="frequency",
                 ),
                 "Battery State of Charge": Sensor(
                     value=ems["ems_data"]["soc_avg"] / 100,
                     type=SensorType.PERCENTAGE,
                     device_identifier=ems_device_id,
+                    slug="battery_state_of_charge",
                 ),
             }
         )
@@ -222,48 +241,56 @@ class Device:
                     value=battery["soc"] / 100,
                     type=SensorType.PERCENTAGE,
                     device_identifier=battery_device_id,
+                    slug="battery_state_of_charge",
                 )
             if "tmin" in battery:
                 self.sensors[f"Homevolt battery {bat_id} tmin"] = Sensor(
                     value=battery["tmin"] / 10,
                     type=SensorType.TEMPERATURE,
                     device_identifier=battery_device_id,
+                    slug="tmin",
                 )
             if "tmax" in battery:
                 self.sensors[f"Homevolt battery {bat_id} tmax"] = Sensor(
                     value=battery["tmax"] / 10,
                     type=SensorType.TEMPERATURE,
                     device_identifier=battery_device_id,
+                    slug="tmax",
                 )
             if "cycle_count" in battery:
                 self.sensors[f"Homevolt battery {bat_id} charge cycles"] = Sensor(
                     value=battery["cycle_count"],
                     type=SensorType.COUNT,
                     device_identifier=battery_device_id,
+                    slug="charge_cycles",
                 )
             if "voltage" in battery:
                 self.sensors[f"Homevolt battery {bat_id} voltage"] = Sensor(
                     value=battery["voltage"] / 100,
                     type=SensorType.VOLTAGE,
                     device_identifier=battery_device_id,
+                    slug="voltage",
                 )
             if "current" in battery:
                 self.sensors[f"Homevolt battery {bat_id} current"] = Sensor(
                     value=battery["current"],
                     type=SensorType.CURRENT,
                     device_identifier=battery_device_id,
+                    slug="current",
                 )
             if "power" in battery:
                 self.sensors[f"Homevolt battery {bat_id} power"] = Sensor(
                     value=battery["power"],
                     type=SensorType.POWER,
                     device_identifier=battery_device_id,
+                    slug="power",
                 )
             if "soh" in battery:
                 self.sensors[f"Homevolt battery {bat_id} soh"] = Sensor(
                     value=battery["soh"] / 100,
                     type=SensorType.PERCENTAGE,
                     device_identifier=battery_device_id,
+                    slug="soh",
                 )
 
         # External sensors (grid, solar, load)
@@ -277,6 +304,9 @@ class Device:
             if not sensor_device_id:
                 continue
 
+            # Suffix for translation keys (e.g., "_grid", "_load")
+            suffix = f"_{sensor_type}"
+
             # Calculate total power from all phases
             total_power = sum(phase["power"] for phase in sensor.get("phase", []))
 
@@ -284,44 +314,53 @@ class Device:
                 value=total_power,
                 type=SensorType.POWER,
                 device_identifier=sensor_device_id,
+                slug=f"power{suffix}",
             )
             self.sensors[f"Energy imported {sensor_type}"] = Sensor(
                 value=sensor.get("energy_imported", 0),
                 type=SensorType.ENERGY_INCREASING,
                 device_identifier=sensor_device_id,
+                slug=f"energy_imported{suffix}",
             )
             self.sensors[f"Energy exported {sensor_type}"] = Sensor(
                 value=sensor.get("energy_exported", 0),
                 type=SensorType.ENERGY_INCREASING,
                 device_identifier=sensor_device_id,
+                slug=f"energy_exported{suffix}",
             )
             self.sensors[f"RSSI {sensor_type}"] = Sensor(
                 value=sensor.get("rssi"),
                 type=SensorType.SIGNAL_STRENGTH,
                 device_identifier=sensor_device_id,
+                slug=f"rssi{suffix}",
             )
             self.sensors[f"Average RSSI {sensor_type}"] = Sensor(
                 value=sensor.get("average_rssi"),
                 type=SensorType.SIGNAL_STRENGTH,
                 device_identifier=sensor_device_id,
+                slug=f"average_rssi{suffix}",
             )
 
             # Phase-specific sensors
-            for phase_name, phase in zip(["L1", "L2", "L3"], sensor.get("phase", []), strict=False):
+            for phase_name, phase in zip(["L1", "L2", "L3"], sensor.get("phase", [])):
+                phase_lower = phase_name.lower()
                 self.sensors[f"{phase_name} Voltage {sensor_type}"] = Sensor(
                     value=phase.get("voltage"),
                     type=SensorType.VOLTAGE,
                     device_identifier=sensor_device_id,
+                    slug=f"{phase_lower}_voltage{suffix}",
                 )
                 self.sensors[f"{phase_name} Current {sensor_type}"] = Sensor(
                     value=phase.get("amp"),
                     type=SensorType.CURRENT,
                     device_identifier=sensor_device_id,
+                    slug=f"{phase_lower}_current{suffix}",
                 )
                 self.sensors[f"{phase_name} Power {sensor_type}"] = Sensor(
                     value=phase.get("power"),
                     type=SensorType.POWER,
                     device_identifier=sensor_device_id,
+                    slug=f"{phase_lower}_power{suffix}",
                 )
 
     def _parse_schedule_data(self, schedule_data: dict[str, Any]) -> None:
@@ -337,6 +376,7 @@ class Device:
             value=schedule_data.get("schedule_id"),
             type=SensorType.TEXT,
             device_identifier=ems_device_id,
+            slug="schedule_id",
         )
 
         schedule = (
@@ -349,21 +389,25 @@ class Device:
             value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
             type=SensorType.SCHEDULE_TYPE,
             device_identifier=ems_device_id,
+            slug="schedule_type",
         )
         self.sensors["Schedule Power Setpoint"] = Sensor(
             value=schedule.get("params", {}).get("setpoint"),
             type=SensorType.POWER,
             device_identifier=ems_device_id,
+            slug="schedule_power_setpoint",
         )
         self.sensors["Schedule Max Power"] = Sensor(
             value=schedule.get("max_charge"),
             type=SensorType.POWER,
             device_identifier=ems_device_id,
+            slug="schedule_max_power",
         )
         self.sensors["Schedule Max Discharge"] = Sensor(
             value=schedule.get("max_discharge"),
             type=SensorType.POWER,
             device_identifier=ems_device_id,
+            slug="schedule_max_discharge",
         )
 
     async def _execute_console_command(self, command: str) -> dict[str, Any]:
@@ -381,7 +425,7 @@ class Device:
             HomevoltDataError: If response parsing fails
         """
         try:
-            url = f"{self.hostname}{ENDPOINT_CONSOLE}"
+            url = f"{self.base_url}{ENDPOINT_CONSOLE}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -589,7 +633,7 @@ class Device:
             HomevoltDataError: If parameter setting fails
         """
         try:
-            url = f"{self.hostname}{ENDPOINT_PARAMS}"
+            url = f"{self.base_url}{ENDPOINT_PARAMS}"
             async with self._websession.post(
                 url,
                 auth=self._auth,
@@ -619,7 +663,7 @@ class Device:
             HomevoltDataError: If parameter retrieval fails
         """
         try:
-            url = f"{self.hostname}{ENDPOINT_PARAMS}"
+            url = f"{self.base_url}{ENDPOINT_PARAMS}"
             async with self._websession.get(url, auth=self._auth) as response:
                 if response.status == 401:
                     raise HomevoltAuthenticationError("Authentication failed")
