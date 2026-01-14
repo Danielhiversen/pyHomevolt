@@ -16,20 +16,20 @@ class Homevolt:
 
     def __init__(
         self,
-        hostname: str,
+        host: str,
         password: str | None = None,
         websession: aiohttp.ClientSession | None = None,
     ) -> None:
         """Initialize the Homevolt connection.
 
         Args:
-            hostname: Hostname of the Homevolt device
+            host: Hostname or IP address of the Homevolt device
             password: Optional password for authentication
             websession: Optional aiohttp ClientSession. If not provided, one will be created.
         """
-        if not hostname.startswith("http"):
-            hostname = f"http://{hostname}"
-        self.hostname = hostname
+        if not host.startswith("http"):
+            host = f"http://{host}"
+        self.base_url = host
         self._password = password
         self._websession = websession
         self._own_session = websession is None
@@ -42,7 +42,7 @@ class Homevolt:
             await self._ensure_session()
             assert self._websession is not None
             self._device = Device(
-                hostname=self.hostname,
+                base_url=self.base_url,
                 password=self._password,
                 websession=self._websession,
             )
