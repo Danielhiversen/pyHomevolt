@@ -18,5 +18,5 @@ class Sensor:
     """Represents a sensor reading."""
 
     value: float | str | None
-    key: str
+    type: str
     device_identifier: str = "main"  # Device identifier for grouping sensors into devices
