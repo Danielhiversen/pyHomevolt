@@ -31,23 +31,22 @@ import homevolt
 async def main():
     async with aiohttp.ClientSession() as session:
         homevolt_connection = homevolt.Homevolt(
-            ip_address="192.168.1.100",
+            host="192.168.1.100",
             password="optional_password",
             websession=session,
         )
         await homevolt_connection.update_info()
 
-        device = homevolt_connection.get_device()
-        print(f"Device ID: {device.device_id}")
-        print(f"Current Power: {device.sensors['Power'].value} W")
-        print(f"Battery SOC: {device.sensors['Battery State of Charge'].value * 100}%")
+        print(f"Device ID: {homevolt_connection.unique_id}")
+        print(f"Current Power: {homevolt_connection.sensors['Power'].value} W")
+        print(f"Battery SOC: {homevolt_connection.sensors['Battery State of Charge'].value * 100}%")
 
         # Access all sensors
-        for sensor_name, sensor in device.sensors.items():
+        for sensor_name, sensor in homevolt_connection.sensors.items():
             print(f"{sensor_name}: {sensor.value} ({sensor.type.value})")
 
         # Access device metadata
-        for device_id, metadata in device.device_metadata.items():
+        for device_id, metadata in homevolt_connection.device_metadata.items():
             print(f"{device_id}: {metadata.name} ({metadata.model})")
 
         await homevolt_connection.close_connection()
@@ -68,17 +67,14 @@ import homevolt
 async def main():
     async with aiohttp.ClientSession() as session:
         async with homevolt.Homevolt(
-            ip_address="192.168.1.100",
+            host="192.168.1.100",
             password="optional_password",
             websession=session,
         ) as homevolt_connection:
             await homevolt_connection.update_info()
 
-            device = homevolt_connection.get_device()
-            await device.update_info()  # Refresh data
-
-            print(f"Device ID: {device.device_id}")
-            print(f"Available sensors: {list(device.sensors.keys())}")
+            print(f"Device ID: {homevolt_connection.unique_id}")
+            print(f"Available sensors: {list(homevolt_connection.sensors.keys())}")
 
 
 if __name__ == "__main__":
@@ -96,21 +92,20 @@ import homevolt
 async def main():
     async with aiohttp.ClientSession() as session:
         async with homevolt.Homevolt(
-            ip_address="192.168.1.100",
+            host="192.168.1.100",
             password="optional_password",
             websession=session,
         ) as homevolt_connection:
             await homevolt_connection.update_info()
-            device = homevolt_connection.get_device()
 
             # Enable local mode to prevent remote schedule overrides
-            await device.enable_local_mode()
+            await homevolt_connection.enable_local_mode()
 
             # Charge battery immediately (up to 3000W, stop at 90% SOC)
-            await device.charge_battery(max_power=3000, max_soc=90)
+            await homevolt_connection.charge_battery(max_power=3000, max_soc=90)
 
             # Or use the full control method
-            await device.set_battery_mode(
+            await homevolt_connection.set_battery_mode(
                 mode=1,  # Inverter Charge
                 max_charge=3000,
                 max_soc=90,
@@ -121,7 +116,7 @@ async def main():
             tonight = datetime.now().replace(hour=23, minute=0, second=0)
             tomorrow = (tonight + timedelta(days=1)).replace(hour=7, minute=0, second=0)
 
-            await device.add_schedule(
+            await homevolt_connection.add_schedule(
                 mode=1,  # Inverter Charge
                 from_time=tonight.isoformat(),
                 to_time=tomorrow.isoformat(),
@@ -130,10 +125,10 @@ async def main():
             )
 
             # Set battery to idle
-            await device.set_battery_idle()
+            await homevolt_connection.set_battery_idle()
 
             # Discharge during peak hours
-            await device.discharge_battery(max_power=2500, min_soc=30)
+            await homevolt_connection.discharge_battery(max_power=2500, min_soc=30)
 
 
 if __name__ == "__main__":
@@ -161,36 +156,27 @@ The following modes are available for battery control:
 
 Main class for connecting to a Homevolt device.
 
-#### `Homevolt(ip_address, password=None, websession=None)`
+#### `Homevolt(host, password=None, websession=None)`
 
 Initialize a Homevolt connection.
 
-- `ip_address` (str): IP address of the Homevolt device
+- `host` (str): Hostname or IP address of the Homevolt device
 - `password` (str, optional): Password for authentication
 - `websession` (aiohttp.ClientSession, optional): HTTP session. If not provided, one will be created.
 
-#### Methods
-
-- `async update_info()`: Fetch and update device information
-- `get_device()`: Get the Device object
-- `async close_connection()`: Close the connection and clean up resources
-
-### Device
-
-Represents a Homevolt EMS device.
-
 #### Properties
 
-- `device_id` (str): Device identifier
+- `unique_id` (str | None): Device unique identifier
 - `sensors` (dict[str, Sensor]): Dictionary of sensor readings
 - `device_metadata` (dict[str, DeviceMetadata]): Dictionary of device metadata
-- `current_schedule` (dict): Current schedule information
+- `current_schedule` (dict | None): Current schedule information
 
 #### Methods
 
-- `async update_info()`: Fetch latest EMS and schedule data
+- `async update_info()`: Fetch and update all device information
 - `async fetch_ems_data()`: Fetch EMS data specifically
 - `async fetch_schedule_data()`: Fetch schedule data specifically
+- `async close_connection()`: Close the connection and clean up resources
 
 #### Battery Control Methods
 
