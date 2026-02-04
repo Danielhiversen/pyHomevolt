@@ -1,6 +1,5 @@
 """Python library for Homevolt EMS devices."""
 
-from .device import Device
 from .exceptions import (
     HomevoltAuthenticationError,
     HomevoltConnectionError,
@@ -8,10 +7,9 @@ from .exceptions import (
     HomevoltError,
 )
 from .homevolt import Homevolt
-from .models import DeviceMetadata, Sensor, SensorType
+from .models import DeviceMetadata, Sensor
 
 __all__ = [
-    "Device",
     "DeviceMetadata",
     "Homevolt",
     "HomevoltAuthenticationError",
@@ -19,5 +17,4 @@ __all__ = [
     "HomevoltDataError",
     "HomevoltError",
     "Sensor",
-    "SensorType",
 ]
