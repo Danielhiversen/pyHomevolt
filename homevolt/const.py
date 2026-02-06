@@ -7,16 +7,16 @@ ENDPOINT_CONSOLE = "/console.json"
 ENDPOINT_PARAMS = "/params.json"
 
 SCHEDULE_TYPE = {
-    0: "Idle",
-    1: "Inverter Charge",
-    2: "Inverter Discharge",
-    3: "Grid Charge",
-    4: "Grid Discharge",
-    5: "Grid Charge/Discharge",
-    6: "Frequency Reserve",
-    7: "Solar Charge",
-    8: "Solar Charge/Discharge",
-    9: "Full Solar Export",
+    "frequency_reserve": "Frequency reserve",
+    "full_solar_export": "Full solar export",
+    "grid_charge": "Grid charge",
+    "grid_charge_discharge": "Grid charge/discharge",
+    "grid_discharge": "Grid discharge",
+    "idle": "Idle",
+    "inverter_charge": "Inverter charge",
+    "inverter_discharge": "Inverter discharge",
+    "solar_charge": "Solar charge",
+    "solar_charge_discharge": "Solar charge/discharge",
 }
 
 # Device type mappings for sensors
