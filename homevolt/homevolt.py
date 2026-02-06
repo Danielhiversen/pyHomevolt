@@ -223,9 +223,9 @@ class Homevolt:
                     type="frequency",
                     device_identifier=ems_device_id,
                 ),
-                "Battery State of Charge": Sensor(
+                "State of Charge": Sensor(
                     value=ems["ems_data"]["soc_avg"] / 100,
-                    type="battery_state_of_charge",
+                    type="state_of_charge",
                     device_identifier=ems_device_id,
                 ),
             }
