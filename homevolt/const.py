@@ -6,17 +6,18 @@ ENDPOINT_SCHEDULE = "/schedule.json"
 ENDPOINT_CONSOLE = "/console.json"
 ENDPOINT_PARAMS = "/params.json"
 
+# Map integer schedule codes to snake_case identifiers
 SCHEDULE_TYPE = {
-    "frequency_reserve": "Frequency reserve",
-    "full_solar_export": "Full solar export",
-    "grid_charge": "Grid charge",
-    "grid_charge_discharge": "Grid charge/discharge",
-    "grid_discharge": "Grid discharge",
-    "idle": "Idle",
-    "inverter_charge": "Inverter charge",
-    "inverter_discharge": "Inverter discharge",
-    "solar_charge": "Solar charge",
-    "solar_charge_discharge": "Solar charge/discharge",
+    0: "idle",
+    1: "inverter_charge",
+    2: "inverter_discharge",
+    3: "grid_charge",
+    4: "grid_discharge",
+    5: "grid_charge_discharge",
+    6: "frequency_reserve",
+    7: "solar_charge",
+    8: "solar_charge_discharge",
+    9: "full_solar_export",
 }
 
 # Device type mappings for sensors
