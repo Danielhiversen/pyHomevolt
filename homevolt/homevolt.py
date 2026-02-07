@@ -89,6 +89,10 @@ class Homevolt:
                     raise HomevoltAuthenticationError("Authentication failed")
                 response.raise_for_status()
                 ems_data = await response.json()
+        except HomevoltAuthenticationError:
+            raise
+        except HomevoltConnectionError:
+            raise
         except aiohttp.ClientError as err:
             raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
         except Exception as err:
@@ -107,6 +111,10 @@ class Homevolt:
                     raise HomevoltAuthenticationError("Authentication failed")
                 response.raise_for_status()
                 schedule_data = await response.json()
+        except HomevoltAuthenticationError:
+            raise
+        except HomevoltConnectionError:
+            raise
         except aiohttp.ClientError as err:
             raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
         except Exception as err:
