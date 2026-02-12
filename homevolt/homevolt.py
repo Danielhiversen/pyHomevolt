@@ -191,14 +191,14 @@ class Homevolt:
                     type="system_temperature",
                     device_identifier=ems_device_id,
                 ),
-                "Imported Energy": Sensor(
+                "Energy imported": Sensor(
                     value=ems["ems_aggregate"]["imported_kwh"],
-                    type="imported_energy",
+                    type="energy_imported",
                     device_identifier=ems_device_id,
                 ),
-                "Exported Energy": Sensor(
+                "Energy exported": Sensor(
                     value=ems["ems_aggregate"]["exported_kwh"],
-                    type="exported_energy",
+                    type="energy_exported",
                     device_identifier=ems_device_id,
                 ),
                 "Available Charging Power": Sensor(
