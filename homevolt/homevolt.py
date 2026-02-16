@@ -228,29 +228,29 @@ class Homevolt:
                 )
             mode_int = valid_modes[mode]
 
-        setpoint_val = int(
+        setpoint_val: int | None = int(
             setpoint
             if setpoint is not None
             else (self.schedule["setpoint"] if self.schedule["setpoint"] is not None else 0)
         )
-        max_charge_val = int(
+        max_charge_val: int | None = int(
             max_charge
             if max_charge is not None
             else (self.schedule["max_charge"] if self.schedule["max_charge"] is not None else 0)
         )
-        max_discharge_val = int(
+        max_discharge_val: int | None = int(
             max_discharge
             if max_discharge is not None
             else (
                 self.schedule["max_discharge"] if self.schedule["max_discharge"] is not None else 0
             )
         )
-        min_soc_val = int(
+        min_soc_val: int | None = int(
             min_soc
             if min_soc is not None
             else (self.schedule["min_soc"] if self.schedule["min_soc"] is not None else 0)
         )
-        max_soc_val = int(
+        max_soc_val: int | None = int(
             max_soc
             if max_soc is not None
             else (self.schedule["max_soc"] if self.schedule["max_soc"] is not None else 100)
