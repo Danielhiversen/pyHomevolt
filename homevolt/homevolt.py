@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import types
 from typing import Any
 
 import aiohttp
@@ -77,7 +78,7 @@ class Homevolt:
         """Check if local mode is enabled."""
         if self.current_schedule is None:
             return False
-        return self.current_schedule.get("local_mode", False)
+        return bool(self.current_schedule.get("local_mode", False))
 
     @property
     def schedule_setpoint(self) -> int | None:
@@ -137,7 +138,12 @@ class Homevolt:
         await self._ensure_session()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.close_connection()
 
