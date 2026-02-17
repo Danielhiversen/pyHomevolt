@@ -8,6 +8,7 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    ENDPOINT_CONSOLE,
     ENDPOINT_EMS,
     ENDPOINT_PARAMS,
     ENDPOINT_SCHEDULE,
@@ -185,6 +186,173 @@ class Homevolt:
 
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
+
+    async def set_battery_mode(
+        self,
+        mode: str | None = None,
+        setpoint: int | float | None = None,
+        max_charge: int | float | None = None,
+        max_discharge: int | float | None = None,
+        min_soc: int | float | None = None,
+        max_soc: int | float | None = None,
+        grid_import_limit: int | float | None = None,
+        grid_export_limit: int | float | None = None,
+    ) -> None:
+        """Set battery operational mode and parameters.
+
+        Merges provided parameters with current state to prevent resetting values.
+
+        Args:
+            mode: Operational mode string (e.g., 'idle', 'inverter_charge'). If None, auto-detects from parameters.
+            setpoint: Power setpoint (W)
+            max_charge: Max charging power (W)
+            max_discharge: Max discharging power (W)
+            min_soc: Minimum state of charge (%)
+            max_soc: Maximum state of charge (%)
+            grid_import_limit: Optional grid import limit (W)
+            grid_export_limit: Optional grid export limit (W)
+        """
+        await self._ensure_session()
+        assert self._websession is not None
+
+        if not self.local_mode_enabled:
+            await self.enable_local_mode()
+
+        mode_int: int | None = None
+        if mode is not None:
+            # Create reverse mapping for validation
+            valid_modes = {v: k for k, v in SCHEDULE_TYPE.items()}
+            if mode not in valid_modes:
+                raise ValueError(
+                    f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
+                )
+            mode_int = valid_modes[mode]
+
+        setpoint_val: int | None = int(
+            setpoint
+            if setpoint is not None
+            else (self.schedule["setpoint"] if self.schedule["setpoint"] is not None else 0)
+        )
+        max_charge_val: int | None = int(
+            max_charge
+            if max_charge is not None
+            else (self.schedule["max_charge"] if self.schedule["max_charge"] is not None else 0)
+        )
+        max_discharge_val: int | None = int(
+            max_discharge
+            if max_discharge is not None
+            else (
+                self.schedule["max_discharge"] if self.schedule["max_discharge"] is not None else 0
+            )
+        )
+        min_soc_val: int | None = int(
+            min_soc
+            if min_soc is not None
+            else (self.schedule["min_soc"] if self.schedule["min_soc"] is not None else 0)
+        )
+        max_soc_val: int | None = int(
+            max_soc
+            if max_soc is not None
+            else (self.schedule["max_soc"] if self.schedule["max_soc"] is not None else 100)
+        )
+
+        grid_import_limit_val = (
+            int(grid_import_limit)
+            if grid_import_limit is not None
+            else self.schedule["grid_import_limit"]
+        )
+        grid_export_limit_val = (
+            int(grid_export_limit)
+            if grid_export_limit is not None
+            else self.schedule["grid_export_limit"]
+        )
+
+        if mode_int == 0:  # Idle
+            setpoint_val = None
+            max_charge_val = None
+            max_discharge_val = None
+            min_soc_val = None
+            max_soc_val = None
+        elif mode_int == 1:  # Inverter Charge
+            setpoint_val = None
+            max_discharge_val = None
+        elif mode_int == 2:  # Inverter Discharge
+            setpoint_val = None
+            max_charge_val = None
+        elif mode_int in (3, 4, 5):  # Grid Charge/Discharge modes
+            max_charge_val = None
+            max_discharge_val = None
+            min_soc_val = None
+            max_soc_val = None
+        elif mode_int == 7:  # Solar Charge
+            setpoint_val = None
+            max_discharge_val = None
+        elif mode_int == 8:  # Solar Charge/Discharge
+            min_soc_val = None
+            max_soc_val = None
+        elif mode_int == 9:  # Full Solar Export
+            setpoint_val = None
+            max_charge_val = None
+            max_discharge_val = None
+            min_soc_val = None
+            max_soc_val = None
+        elif mode_int is None:
+            # Auto-detect mode based on provided parameters
+            # Check original input parameters (not the merged values)
+            if setpoint is not None and max_charge is not None and max_discharge is not None:
+                mode_int = 8  # Solar Charge/Discharge
+            elif setpoint is not None:
+                mode_int = 3  # Grid Charge (default grid mode with setpoint)
+            elif max_charge is not None and max_discharge is None:
+                mode_int = 1  # Inverter Charge
+            elif max_discharge is not None and max_charge is None:
+                mode_int = 2  # Inverter Discharge
+            else:
+                # Fall back to current mode or default to idle
+                mode_int = self.schedule["mode"] if self.schedule["mode"] is not None else 0
+
+        cmd_parts = [f"sched_set -m {mode_int}"]
+
+        if setpoint_val is not None:
+            cmd_parts.append(f"-s {setpoint_val}")
+        if max_charge_val is not None:
+            cmd_parts.append(f"-c {max_charge_val}")
+        if max_discharge_val is not None:
+            cmd_parts.append(f"-d {max_discharge_val}")
+        if min_soc_val is not None:
+            cmd_parts.append(f"-n {min_soc_val}")
+        if max_soc_val is not None:
+            cmd_parts.append(f"-x {max_soc_val}")
+        if grid_import_limit_val is not None:
+            cmd_parts.append(f"-i {int(grid_import_limit_val)}")
+        if grid_export_limit_val is not None:
+            cmd_parts.append(f"-e {int(grid_export_limit_val)}")
+
+        command = " ".join(cmd_parts)
+        _LOGGER.debug("Sending battery mode command: %s", command)
+
+        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
+        data = {"command": command}
+
+        try:
+            async with self._websession.post(url, json=data, auth=self._auth) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                _LOGGER.debug("Battery mode set successfully")
+        except HomevoltAuthenticationError:
+            raise
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
+
+        self.schedule["mode"] = mode_int
+        self.schedule["setpoint"] = setpoint_val
+        self.schedule["max_charge"] = max_charge_val
+        self.schedule["max_discharge"] = max_discharge_val
+        self.schedule["min_soc"] = min_soc_val
+        self.schedule["max_soc"] = max_soc_val
+        self.schedule["grid_import_limit"] = grid_import_limit_val
+        self.schedule["grid_export_limit"] = grid_export_limit_val
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""
