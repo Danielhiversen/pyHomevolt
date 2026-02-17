@@ -78,7 +78,7 @@ class Homevolt:
         """Check if local mode is enabled."""
         if self.current_schedule is None:
             return False
-        return self.current_schedule.get("local_mode", False)
+        return bool(self.current_schedule.get("local_mode", False))
 
     @property
     def schedule_setpoint(self) -> int | None:
