@@ -9,6 +9,7 @@ import aiohttp
 
 from .const import (
     ENDPOINT_EMS,
+    ENDPOINT_PARAMS,
     ENDPOINT_SCHEDULE,
     SCHEDULE_TYPE,
 )
@@ -50,6 +51,68 @@ class Homevolt:
         self.sensors: dict[str, Sensor] = {}
         self.device_metadata: dict[str, DeviceMetadata] = {}
         self.current_schedule: dict[str, Any] | None = None
+
+        self.schedule: dict[str, int | None] = {
+            "mode": None,
+            "setpoint": None,
+            "max_charge": None,
+            "max_discharge": None,
+            "min_soc": None,
+            "max_soc": None,
+            "grid_import_limit": None,
+            "grid_export_limit": None,
+            "threshold_high": None,
+            "threshold_low": None,
+            "freq_reg_droop_up": None,
+            "freq_reg_droop_down": None,
+        }
+
+    @property
+    def schedule_mode(self) -> int:
+        """Get current schedule mode (0-9)."""
+        return self.schedule["mode"] if self.schedule["mode"] is not None else 0
+
+    @property
+    def local_mode_enabled(self) -> bool:
+        """Check if local mode is enabled."""
+        if self.current_schedule is None:
+            return False
+        return self.current_schedule.get("local_mode", False)
+
+    @property
+    def schedule_setpoint(self) -> int | None:
+        """Get current schedule power setpoint."""
+        return self.schedule["setpoint"]
+
+    @property
+    def schedule_max_charge(self) -> int | None:
+        """Get current schedule max charge power."""
+        return self.schedule["max_charge"]
+
+    @property
+    def schedule_max_discharge(self) -> int | None:
+        """Get current schedule max discharge power."""
+        return self.schedule["max_discharge"]
+
+    @property
+    def schedule_min_soc(self) -> int | None:
+        """Get current schedule minimum state of charge."""
+        return self.schedule["min_soc"]
+
+    @property
+    def schedule_max_soc(self) -> int | None:
+        """Get current schedule maximum state of charge."""
+        return self.schedule["max_soc"]
+
+    @property
+    def schedule_grid_import_limit(self) -> int | None:
+        """Get current grid import limit."""
+        return self.schedule["grid_import_limit"]
+
+    @property
+    def schedule_grid_export_limit(self) -> int | None:
+        """Get current grid export limit."""
+        return self.schedule["grid_export_limit"]
 
     async def update_info(self) -> None:
         """Fetch and update all device information."""
@@ -122,6 +185,41 @@ class Homevolt:
 
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
+
+    async def enable_local_mode(self) -> None:
+        """Enable local mode for battery control."""
+        await self._set_local_mode(1)
+
+    async def disable_local_mode(self) -> None:
+        """Disable local mode for battery control."""
+        await self._set_local_mode(0)
+
+    async def _set_local_mode(self, value: int) -> None:
+        """Set local mode parameter.
+
+        Args:
+            value: 1 to enable, 0 to disable
+        """
+        await self._ensure_session()
+        assert self._websession is not None
+
+        url = f"{self.base_url}{ENDPOINT_PARAMS}"
+        data = {
+            "k": "settings_local",
+            "v": "true" if value else "false",
+            "store": "0",
+        }
+
+        try:
+            async with self._websession.post(url, data=data, auth=self._auth) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                _LOGGER.debug("Local mode set to %s", value)
+        except HomevoltAuthenticationError:
+            raise
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""
@@ -366,7 +464,7 @@ class Homevolt:
                 )
 
     def _parse_schedule_data(self, schedule_data: dict[str, Any]) -> None:
-        """Parse schedule JSON response."""
+        """Parse schedule JSON response and track battery control state."""
         self.current_schedule = schedule_data
 
         if not self.unique_id:
@@ -386,23 +484,39 @@ class Homevolt:
             else {"type": -1, "params": {}}
         )
 
+        params = schedule.get("params", {})
+
+        # Track current battery control state
+        self.schedule["mode"] = schedule.get("type")
+        self.schedule["setpoint"] = params.get("setpoint")
+        self.schedule["max_charge"] = schedule.get("max_charge")
+        self.schedule["max_discharge"] = schedule.get("max_discharge")
+        self.schedule["min_soc"] = params.get("min_soc") or params.get("min")
+        self.schedule["max_soc"] = params.get("max_soc") or params.get("max")
+        self.schedule["grid_import_limit"] = params.get("grid_import_limit")
+        self.schedule["grid_export_limit"] = params.get("grid_export_limit")
+        self.schedule["threshold_high"] = params.get("threshold_high")
+        self.schedule["threshold_low"] = params.get("threshold_low")
+        self.schedule["freq_reg_droop_up"] = params.get("freq_reg_droop_up")
+        self.schedule["freq_reg_droop_down"] = params.get("freq_reg_droop_down")
+
         self.sensors["Schedule Type"] = Sensor(
             value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
             type="schedule_type",
             device_identifier=ems_device_id,
         )
         self.sensors["Schedule Power Setpoint"] = Sensor(
-            value=schedule.get("params", {}).get("setpoint"),
+            value=self.schedule["setpoint"],
             type="schedule_power_setpoint",
             device_identifier=ems_device_id,
         )
         self.sensors["Schedule Max Power"] = Sensor(
-            value=schedule.get("max_charge"),
+            value=self.schedule["max_charge"],
             type="schedule_max_power",
             device_identifier=ems_device_id,
         )
         self.sensors["Schedule Max Discharge"] = Sensor(
-            value=schedule.get("max_discharge"),
+            value=self.schedule["max_discharge"],
             type="schedule_max_discharge",
             device_identifier=ems_device_id,
         )
