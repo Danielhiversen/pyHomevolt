@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import types
 from typing import Any
 
 import aiohttp
@@ -137,7 +138,12 @@ class Homevolt:
         await self._ensure_session()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: types.TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.close_connection()
 
