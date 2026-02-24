@@ -9,6 +9,7 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    ENDPOINT_CONSOLE,
     ENDPOINT_EMS,
     ENDPOINT_PARAMS,
     ENDPOINT_SCHEDULE,
@@ -191,6 +192,50 @@ class Homevolt:
 
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
+
+    async def set_battery_mode(
+        self,
+        mode: str,
+    ) -> None:
+        """Set battery operational mode and parameters.
+
+        Merges provided parameters with current state to prevent resetting values.
+
+        Args:
+            mode: Operational mode string (e.g., 'idle', 'inverter_charge').
+        """
+        await self._ensure_session()
+        assert self._websession is not None
+
+        if not self.local_mode_enabled:
+            await self.enable_local_mode()
+
+        # Create reverse mapping for validation
+        valid_modes = {v: k for k, v in SCHEDULE_TYPE.items()}
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
+            )
+        mode_int = valid_modes[mode]
+
+        command = f"sched_set -m {mode_int}"
+        _LOGGER.debug("Sending battery mode command: %s", command)
+
+        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
+        data = {"command": command}
+
+        try:
+            async with self._websession.post(url, json=data, auth=self._auth) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                _LOGGER.debug("Battery mode set successfully")
+        except HomevoltAuthenticationError:
+            raise
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
+
+        self.schedule["mode"] = mode_int
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""
