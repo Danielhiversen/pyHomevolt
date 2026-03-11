@@ -3,12 +3,14 @@
 Python library for Homevolt EMS devices.
 
 Get real-time data from your Homevolt Energy Management System, including:
+
 - Voltage, current, and power measurements
 - Battery state of charge and temperature
 - Grid, solar, and load sensor data
 - Schedule information
 
 Control your battery with:
+
 - Immediate battery control (charge, discharge, idle)
 - Scheduled battery operations
 - Local mode management
@@ -18,6 +20,24 @@ Control your battery with:
 
 ```bash
 pip install homevolt
+```
+
+## Development
+
+This repository supports a standard `uv` development workflow.
+
+```bash
+uv sync --dev
+```
+
+That creates a local environment with the package and development tools installed.
+
+Common commands:
+
+```bash
+uv run ruff check .
+uv run mypy homevolt
+uv run pytest
 ```
 
 ## Example
@@ -181,6 +201,7 @@ Initialize a Homevolt connection.
 #### Battery Control Methods
 
 **Immediate Control:**
+
 - `async set_battery_mode(mode, **kwargs)`: Set immediate battery control mode
 - `async charge_battery(**kwargs)`: Charge battery using inverter
 - `async discharge_battery(**kwargs)`: Discharge battery using inverter
@@ -190,11 +211,13 @@ Initialize a Homevolt connection.
 - `async charge_from_solar(**kwargs)`: Charge from solar only
 
 **Scheduled Control:**
+
 - `async add_schedule(mode, **kwargs)`: Add a scheduled battery control entry
 - `async delete_schedule(schedule_id)`: Delete a schedule by ID
 - `async clear_all_schedules()`: Clear all schedules
 
 **Configuration:**
+
 - `async enable_local_mode()`: Enable local mode (prevents remote overrides)
 - `async disable_local_mode()`: Disable local mode (allows remote overrides)
 - `async set_parameter(key, value)`: Set a device parameter
@@ -216,6 +239,7 @@ Initialize a Homevolt connection.
 #### SensorType
 
 Enumeration of sensor types:
+
 - `VOLTAGE`
 - `CURRENT`
 - `POWER`
@@ -239,4 +263,3 @@ Enumeration of sensor types:
 ## License
 
 GPL-3.0
-
