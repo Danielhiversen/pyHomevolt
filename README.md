@@ -35,6 +35,7 @@ That creates a local environment with the package and development tools installe
 Common commands:
 
 ```bash
+uv run pre-commit run --all-files
 uv run ruff check .
 uv run mypy homevolt
 uv run pytest
