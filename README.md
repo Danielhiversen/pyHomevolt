@@ -37,7 +37,7 @@ Common commands:
 ```bash
 uv run pre-commit run --all-files
 uv run ruff check .
-uv run mypy homevolt
+uv run ty check homevolt
 uv run pytest
 ```
 
