@@ -11,9 +11,9 @@ repos:
       - id: ruff-format
   - repo: local
     hooks:
-      - id: ty
-        name: ty
-        entry: ty check
+      - id: mypy
+        name: mypy
+        entry: mypy
         language: system
         types: [python]
         files: ^(homevolt|test)/.+\.py$
