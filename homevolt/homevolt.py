@@ -27,22 +27,6 @@ _LOGGER = logging.getLogger(__name__)
 class Homevolt:
     """Main class for interacting with Homevolt EMS devices."""
 
-    @staticmethod
-    def _as_dict(value: Any) -> dict[str, Any]:
-        """Return a JSON object-like value as a string-keyed dictionary."""
-        if not isinstance(value, dict):
-            return {}
-        return {str(key): item for key, item in value.items()}
-
-    @staticmethod
-    def _as_int(value: Any) -> int | None:
-        """Return integer JSON values while excluding booleans and nested objects."""
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, int):
-            return value
-        return None
-
     def __init__(
         self,
         host: str,
@@ -500,35 +484,30 @@ class Homevolt:
             device_identifier=ems_device_id,
         )
 
-        raw_schedules = schedule_data.get("schedule")
-        if isinstance(raw_schedules, list) and raw_schedules:
-            schedule = self._as_dict(raw_schedules[0])
-        else:
-            schedule = {"type": -1, "params": {}}
+        schedule = (
+            schedule_data.get("schedule", [{}])[0]
+            if schedule_data.get("schedule")
+            else {"type": -1, "params": {}}
+        )
 
-        params = self._as_dict(schedule.get("params"))
-        schedule_mode = self._as_int(schedule.get("type"))
+        params = schedule.get("params", {})
 
         # Track current battery control state
-        self.schedule["mode"] = schedule_mode
-        self.schedule["setpoint"] = self._as_int(params.get("setpoint"))
-        self.schedule["max_charge"] = self._as_int(schedule.get("max_charge"))
-        self.schedule["max_discharge"] = self._as_int(schedule.get("max_discharge"))
-        self.schedule["min_soc"] = self._as_int(params.get("min_soc")) or self._as_int(
-            params.get("min")
-        )
-        self.schedule["max_soc"] = self._as_int(params.get("max_soc")) or self._as_int(
-            params.get("max")
-        )
-        self.schedule["grid_import_limit"] = self._as_int(params.get("grid_import_limit"))
-        self.schedule["grid_export_limit"] = self._as_int(params.get("grid_export_limit"))
-        self.schedule["threshold_high"] = self._as_int(params.get("threshold_high"))
-        self.schedule["threshold_low"] = self._as_int(params.get("threshold_low"))
-        self.schedule["freq_reg_droop_up"] = self._as_int(params.get("freq_reg_droop_up"))
-        self.schedule["freq_reg_droop_down"] = self._as_int(params.get("freq_reg_droop_down"))
+        self.schedule["mode"] = schedule.get("type")
+        self.schedule["setpoint"] = params.get("setpoint")
+        self.schedule["max_charge"] = schedule.get("max_charge")
+        self.schedule["max_discharge"] = schedule.get("max_discharge")
+        self.schedule["min_soc"] = params.get("min_soc") or params.get("min")
+        self.schedule["max_soc"] = params.get("max_soc") or params.get("max")
+        self.schedule["grid_import_limit"] = params.get("grid_import_limit")
+        self.schedule["grid_export_limit"] = params.get("grid_export_limit")
+        self.schedule["threshold_high"] = params.get("threshold_high")
+        self.schedule["threshold_low"] = params.get("threshold_low")
+        self.schedule["freq_reg_droop_up"] = params.get("freq_reg_droop_up")
+        self.schedule["freq_reg_droop_down"] = params.get("freq_reg_droop_down")
 
         self.sensors["Schedule Type"] = Sensor(
-            value=SCHEDULE_TYPE.get(schedule_mode if schedule_mode is not None else -1),
+            value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
             type="schedule_type",
             device_identifier=ems_device_id,
         )
