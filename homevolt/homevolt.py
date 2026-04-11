@@ -697,13 +697,13 @@ class Homevolt:
             device_identifier=ems_device_id,
         )
 
-        schedule = (
+        schedule: dict[str, Any] = (
             schedule_data.get("schedule", [{}])[0]
             if schedule_data.get("schedule")
             else {"type": -1, "params": {}}
         )
 
-        params = schedule.get("params", {})
+        params: dict[str, Any] = schedule.get("params", {})
 
         # Track current battery control state
         self.schedule["mode"] = schedule.get("type")
