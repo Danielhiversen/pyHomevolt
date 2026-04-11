@@ -193,7 +193,7 @@ class Homevolt:
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
 
-async def set_battery_parameters(
+    async def set_battery_parameters(
         self,
         setpoint: int | float | None = None,
         max_charge: int | float | None = None,
@@ -220,33 +220,28 @@ async def set_battery_parameters(
         if not self.local_mode_enabled:
             await self.enable_local_mode()
 
-        setpoint_val: int = int(
-            setpoint
-            if setpoint is not None
-            else (self.schedule["setpoint"])
-        )
-        max_charge_val: int | None = int(
-            max_charge
-            if max_charge is not None
-            else (self.schedule["max_charge"])
-        )
-        max_discharge_val: int | None = int(
-            max_discharge
-            if max_discharge is not None
-            else (
-                self.schedule["max_discharge"]
+        setpoint_raw = setpoint if setpoint is not None else self.schedule["setpoint"]
+        if setpoint_raw is None:
+            raise HomevoltDataError(
+                "Setpoint must be provided when no existing schedule setpoint is available"
             )
+        setpoint_val: int = int(setpoint_raw)
+
+        max_charge_raw = max_charge if max_charge is not None else self.schedule["max_charge"]
+        max_charge_val: int | None = int(max_charge_raw) if max_charge_raw is not None else None
+
+        max_discharge_raw = (
+            max_discharge if max_discharge is not None else self.schedule["max_discharge"]
         )
-        min_soc_val: int | None = int(
-            min_soc
-            if min_soc is not None
-            else (self.schedule["min_soc"])
+        max_discharge_val: int | None = (
+            int(max_discharge_raw) if max_discharge_raw is not None else None
         )
-        max_soc_val: int | None = int(
-            max_soc
-            if max_soc is not None
-            else (self.schedule["max_soc"])
-        )
+
+        min_soc_raw = min_soc if min_soc is not None else self.schedule["min_soc"]
+        min_soc_val: int | None = int(min_soc_raw) if min_soc_raw is not None else None
+
+        max_soc_raw = max_soc if max_soc is not None else self.schedule["max_soc"]
+        max_soc_val: int | None = int(max_soc_raw) if max_soc_raw is not None else None
 
         grid_import_limit_val: int | None = (
             int(grid_import_limit)
@@ -261,39 +256,20 @@ async def set_battery_parameters(
 
         mode_int = self.schedule["mode"] if self.schedule["mode"] is not None else 0
 
-        cmd_parts = [f"sched_set {mode_int}"]
-
-        cmd_parts.append(f"-s {setpoint_val}")
-        if max_charge_val is not None:
-            cmd_parts.append(f"-c {max_charge_val}")
-        if max_discharge_val is not None:
-            cmd_parts.append(f"-d {max_discharge_val}")
-        if min_soc_val is not None:
-            cmd_parts.append(f"-n {min_soc_val}")
-        if max_soc_val is not None:
-            cmd_parts.append(f"-x {max_soc_val}")
-        if grid_import_limit_val is not None:
-            cmd_parts.append(f"-i {int(grid_import_limit_val)}")
-        if grid_export_limit_val is not None:
-            cmd_parts.append(f"-e {int(grid_export_limit_val)}")
-
-        command = " ".join(cmd_parts)
+        command = self._build_sched_set_command(
+            mode_int=mode_int,
+            setpoint=setpoint_val,
+            max_charge=max_charge_val,
+            max_discharge=max_discharge_val,
+            min_soc=min_soc_val,
+            max_soc=max_soc_val,
+            grid_import_limit=grid_import_limit_val,
+            grid_export_limit=grid_export_limit_val,
+        )
         _LOGGER.debug("Sending battery mode command: %s", command)
+        await self._post_console_command(command)
 
-        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
-        data = {"command": command}
-
-        try:
-            async with self._websession.post(url, json=data, auth=self._auth) as response:
-                if response.status == 401:
-                    raise HomevoltAuthenticationError("Authentication failed")
-                response.raise_for_status()
-                _LOGGER.debug("Battery mode set successfully")
-        except HomevoltAuthenticationError:
-            raise
-        except aiohttp.ClientError as err:
-            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
-
+        self.schedule["mode"] = mode_int
         self.schedule["setpoint"] = setpoint_val
         self.schedule["max_charge"] = max_charge_val
         self.schedule["max_discharge"] = max_discharge_val
@@ -323,47 +299,60 @@ async def set_battery_parameters(
                 f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
             )
         mode_int = valid_modes[mode]
-        setpoint_val = int(self.schedule["setpoint"] if self.schedule["setpoint"] is not None else 0)
-        max_charge_val = int(self.schedule["max_charge"]) if self.schedule["max_charge"] is not None else None
-        max_discharge_val = int(self.schedule["max_discharge"]) if self.schedule["max_discharge"] is not None else None
-        min_soc_val = int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
-        max_soc_val = int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
-        grid_import_limit_val = int(self.schedule["grid_import_limit"]) if self.schedule["grid_import_limit"] is not None else None
-        grid_export_limit_val = int(self.schedule["grid_export_limit"]) if self.schedule["grid_export_limit"] is not None else None
-        cmd_parts = [f"sched_set {mode_int}"]
-        cmd_parts.append(f"-s {setpoint_val}")
-        if max_charge_val is not None:
-            cmd_parts.append(f"-c {max_charge_val}")
-        if max_discharge_val is not None:
-            cmd_parts.append(f"-d {max_discharge_val}")
-        if min_soc_val is not None:
-            cmd_parts.append(f"-n {min_soc_val}")
-        if max_soc_val is not None:
-            cmd_parts.append(f"-x {max_soc_val}")
-        if grid_import_limit_val is not None:
-            cmd_parts.append(f"-i {int(grid_import_limit_val)}")
-        if grid_export_limit_val is not None:
-            cmd_parts.append(f"-e {int(grid_export_limit_val)}")
-
-        command = " ".join(cmd_parts)
+        if self.schedule["setpoint"] is not None:
+            setpoint_val = int(self.schedule["setpoint"])
+        else:
+            if mode in ("inverter_charge", "grid_charge", "solar_charge"):
+                setpoint_val = 12000
+            elif mode in ("inverter_discharge", "grid_discharge", "full_solar_export"):
+                setpoint_val = 12000
+            else:
+                setpoint_val = 0
+        max_charge_val = (
+            int(self.schedule["max_charge"]) if self.schedule["max_charge"] is not None else None
+        )
+        max_discharge_val = (
+            int(self.schedule["max_discharge"])
+            if self.schedule["max_discharge"] is not None
+            else None
+        )
+        min_soc_val = (
+            int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
+        )
+        max_soc_val = (
+            int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
+        )
+        grid_import_limit_val = (
+            int(self.schedule["grid_import_limit"])
+            if self.schedule["grid_import_limit"] is not None
+            else None
+        )
+        grid_export_limit_val = (
+            int(self.schedule["grid_export_limit"])
+            if self.schedule["grid_export_limit"] is not None
+            else None
+        )
+        command = self._build_sched_set_command(
+            mode_int=mode_int,
+            setpoint=setpoint_val,
+            max_charge=max_charge_val,
+            max_discharge=max_discharge_val,
+            min_soc=min_soc_val,
+            max_soc=max_soc_val,
+            grid_import_limit=grid_import_limit_val,
+            grid_export_limit=grid_export_limit_val,
+        )
         _LOGGER.debug("Sending battery mode command: %s", command)
-
-        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
-        data = {"command": command}
-
-        try:
-            async with self._websession.post(url, json=data, auth=self._auth) as response:
-                if response.status == 401:
-                    raise HomevoltAuthenticationError("Authentication failed")
-                response.raise_for_status()
-                response_text = await response.text()
-                _LOGGER.debug("Battery mode set successfully: %s", response_text)
-        except HomevoltAuthenticationError:
-            raise
-        except aiohttp.ClientError as err:
-            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
+        await self._post_console_command(command)
 
         self.schedule["mode"] = mode_int
+        self.schedule["setpoint"] = setpoint_val
+        self.schedule["max_charge"] = max_charge_val
+        self.schedule["max_discharge"] = max_discharge_val
+        self.schedule["min_soc"] = min_soc_val
+        self.schedule["max_soc"] = max_soc_val
+        self.schedule["grid_import_limit"] = grid_import_limit_val
+        self.schedule["grid_export_limit"] = grid_export_limit_val
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""
@@ -385,8 +374,8 @@ async def set_battery_parameters(
         url = f"{self.base_url}{ENDPOINT_PARAMS}"
         data = {
             "k": "settings_local",
-            "v": "true" if value else "false",
-            "store": "0",
+            "v": str(value),
+            "store": "1",
         }
 
         try:
@@ -399,6 +388,57 @@ async def set_battery_parameters(
             raise
         except aiohttp.ClientError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
+
+        if self.current_schedule is not None:
+            self.current_schedule["local_mode"] = bool(value)
+
+    def _build_sched_set_command(
+        self,
+        mode_int: int,
+        setpoint: int,
+        max_charge: int | None,
+        max_discharge: int | None,
+        min_soc: int | None,
+        max_soc: int | None,
+        grid_import_limit: int | None,
+        grid_export_limit: int | None,
+    ) -> str:
+        """Build a sched_set console command."""
+        cmd_parts = [f"sched_set {mode_int}", f"-s {setpoint}"]
+        if max_charge is not None:
+            cmd_parts.append(f"-c {max_charge}")
+        if max_discharge is not None:
+            cmd_parts.append(f"-d {max_discharge}")
+        if min_soc is not None:
+            cmd_parts.append(f"-n {min_soc}")
+        if max_soc is not None:
+            cmd_parts.append(f"-x {max_soc}")
+        if grid_import_limit is not None:
+            cmd_parts.append(f"-i {grid_import_limit}")
+        if grid_export_limit is not None:
+            cmd_parts.append(f"-e {grid_export_limit}")
+        return " ".join(cmd_parts)
+
+    async def _post_console_command(self, command: str) -> None:
+        """Send a console command using the form payload expected by the device."""
+        await self._ensure_session()
+        assert self._websession is not None
+
+        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
+        data = aiohttp.FormData()
+        data.add_field("cmd", command, content_type="text/plain")
+
+        try:
+            async with self._websession.post(url, data=data, auth=self._auth) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                response_text = await response.text()
+                _LOGGER.debug("Battery mode set successfully: %s", response_text)
+        except HomevoltAuthenticationError:
+            raise
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""
@@ -668,8 +708,8 @@ async def set_battery_parameters(
         # Track current battery control state
         self.schedule["mode"] = schedule.get("type")
         self.schedule["setpoint"] = params.get("setpoint")
-        self.schedule["max_charge"] = schedule.get("max_charge")
-        self.schedule["max_discharge"] = schedule.get("max_discharge")
+        self.schedule["max_charge"] = params.get("max_charge")
+        self.schedule["max_discharge"] = params.get("max_discharge")
         self.schedule["min_soc"] = params.get("min_soc") or params.get("min")
         self.schedule["max_soc"] = params.get("max_soc") or params.get("max")
         self.schedule["grid_import_limit"] = params.get("grid_import_limit")
