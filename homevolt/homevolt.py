@@ -58,7 +58,9 @@ class Homevolt:
         self._own_session = websession is None
         self._auth = aiohttp.BasicAuth("admin", password) if password else None
         self._timeout = aiohttp.ClientTimeout(
-            total=None, connect=connect_timeout, sock_read=read_timeout
+            total=connect_timeout + read_timeout,
+            connect=connect_timeout,
+            sock_read=read_timeout,
         )
 
         self.unique_id: str | None = None
@@ -283,7 +285,10 @@ class Homevolt:
             "store": "0",
         }
 
-        await self._post(url, data)
+        try:
+            await self._post(url, data)
+        except HomevoltConnectionError as err:
+            raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
         _LOGGER.debug("Local mode set to %s", value)
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
