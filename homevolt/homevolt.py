@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import types
 from typing import Any
@@ -9,9 +10,14 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_READ_TIMEOUT,
     ENDPOINT_EMS,
     ENDPOINT_PARAMS,
     ENDPOINT_SCHEDULE,
+    RETRY_BACKOFF_FACTOR,
+    RETRY_COUNT,
+    RETRY_STATUS_CODES,
     SCHEDULE_TYPE,
 )
 from .exceptions import (
@@ -32,6 +38,8 @@ class Homevolt:
         host: str,
         password: str | None = None,
         websession: aiohttp.ClientSession | None = None,
+        connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
+        read_timeout: float = DEFAULT_READ_TIMEOUT,
     ) -> None:
         """Initialize the Homevolt connection.
 
@@ -39,6 +47,8 @@ class Homevolt:
             host: Hostname or IP address of the Homevolt device
             password: Optional password for authentication
             websession: Optional aiohttp ClientSession. If not provided, one will be created.
+            connect_timeout: Seconds to wait for establishing a connection.
+            read_timeout: Seconds to wait for reading response data.
         """
         if not host.startswith("http"):
             host = f"http://{host}"
@@ -47,6 +57,11 @@ class Homevolt:
         self._websession = websession
         self._own_session = websession is None
         self._auth = aiohttp.BasicAuth("admin", password) if password else None
+        self._timeout = aiohttp.ClientTimeout(
+            total=connect_timeout + read_timeout,
+            connect=connect_timeout,
+            sock_read=read_timeout,
+        )
 
         self.unique_id: str | None = None
         self.sensors: dict[str, Sensor] = {}
@@ -147,48 +162,102 @@ class Homevolt:
         """Async context manager exit."""
         await self.close_connection()
 
-    async def fetch_ems_data(self) -> None:
-        """Fetch EMS data from the device."""
+    async def _get_json(self, url: str) -> Any:
+        """GET a URL with retries and return the parsed JSON body.
+
+        Retries on timeouts, client errors, and transient HTTP status codes
+        (502/503/504) with exponential backoff. Never retries 401.
+        """
         await self._ensure_session()
         assert self._websession is not None
+        last_err: Exception | None = None
+        for attempt in range(RETRY_COUNT + 1):
+            try:
+                async with self._websession.get(
+                    url, auth=self._auth, timeout=self._timeout
+                ) as response:
+                    if response.status == 401:
+                        raise HomevoltAuthenticationError("Authentication failed")
+                    response.raise_for_status()
+                    try:
+                        return await response.json()
+                    except (aiohttp.ContentTypeError, ValueError) as err:
+                        raise HomevoltDataError(f"Failed to parse data: {err}") from err
+            except HomevoltAuthenticationError:
+                raise
+            except HomevoltDataError:
+                raise
+            except (TimeoutError, aiohttp.ClientError) as err:
+                if (
+                    isinstance(err, aiohttp.ClientResponseError)
+                    and err.status not in RETRY_STATUS_CODES
+                ):
+                    raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
+                last_err = err
+                if attempt < RETRY_COUNT:
+                    delay = RETRY_BACKOFF_FACTOR * (2**attempt)
+                    _LOGGER.debug(
+                        "Request to %s failed (%s), retrying in %.1fs (attempt %d/%d)",
+                        url,
+                        err,
+                        delay,
+                        attempt + 1,
+                        RETRY_COUNT,
+                    )
+                    await asyncio.sleep(delay)
+        raise HomevoltConnectionError(f"Failed to connect to device: {last_err}") from last_err
+
+    async def _post(self, url: str, data: dict[str, str]) -> None:
+        """POST data to a URL with retries.
+
+        Retries on timeouts, client errors, and transient HTTP status codes
+        (502/503/504) with exponential backoff. Never retries 401.
+        """
+        await self._ensure_session()
+        assert self._websession is not None
+        last_err: Exception | None = None
+        for attempt in range(RETRY_COUNT + 1):
+            try:
+                async with self._websession.post(
+                    url, data=data, auth=self._auth, timeout=self._timeout
+                ) as response:
+                    if response.status == 401:
+                        raise HomevoltAuthenticationError("Authentication failed")
+                    response.raise_for_status()
+                    return
+            except HomevoltAuthenticationError:
+                raise
+            except (TimeoutError, aiohttp.ClientError) as err:
+                if (
+                    isinstance(err, aiohttp.ClientResponseError)
+                    and err.status not in RETRY_STATUS_CODES
+                ):
+                    raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
+                last_err = err
+                if attempt < RETRY_COUNT:
+                    delay = RETRY_BACKOFF_FACTOR * (2**attempt)
+                    _LOGGER.debug(
+                        "Request to %s failed (%s), retrying in %.1fs (attempt %d/%d)",
+                        url,
+                        err,
+                        delay,
+                        attempt + 1,
+                        RETRY_COUNT,
+                    )
+                    await asyncio.sleep(delay)
+        raise HomevoltConnectionError(f"Failed to connect to device: {last_err}") from last_err
+
+    async def fetch_ems_data(self) -> None:
+        """Fetch EMS data from the device."""
         url = f"{self.base_url}{ENDPOINT_EMS}"
-        try:
-            async with self._websession.get(url, auth=self._auth) as response:
-                if response.status == 401:
-                    raise HomevoltAuthenticationError("Authentication failed")
-                response.raise_for_status()
-                ems_data = await response.json()
-        except HomevoltAuthenticationError:
-            raise
-        except HomevoltConnectionError:
-            raise
-        except aiohttp.ClientError as err:
-            raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
-        except Exception as err:
-            raise HomevoltDataError(f"Failed to parse EMS data: {err}") from err
+        ems_data = await self._get_json(url)
         _LOGGER.debug("EMS Data: %s", ems_data)
         self._parse_ems_data(ems_data)
 
     async def fetch_schedule_data(self) -> None:
         """Fetch schedule data from the device."""
-        await self._ensure_session()
-        assert self._websession is not None
         url = f"{self.base_url}{ENDPOINT_SCHEDULE}"
-        try:
-            async with self._websession.get(url, auth=self._auth) as response:
-                if response.status == 401:
-                    raise HomevoltAuthenticationError("Authentication failed")
-                response.raise_for_status()
-                schedule_data = await response.json()
-        except HomevoltAuthenticationError:
-            raise
-        except HomevoltConnectionError:
-            raise
-        except aiohttp.ClientError as err:
-            raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
-        except Exception as err:
-            raise HomevoltDataError(f"Failed to parse schedule data: {err}") from err
-
+        schedule_data = await self._get_json(url)
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
 
@@ -217,15 +286,10 @@ class Homevolt:
         }
 
         try:
-            async with self._websession.post(url, data=data, auth=self._auth) as response:
-                if response.status == 401:
-                    raise HomevoltAuthenticationError("Authentication failed")
-                response.raise_for_status()
-                _LOGGER.debug("Local mode set to %s", value)
-        except HomevoltAuthenticationError:
-            raise
-        except aiohttp.ClientError as err:
+            await self._post(url, data)
+        except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
+        _LOGGER.debug("Local mode set to %s", value)
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""

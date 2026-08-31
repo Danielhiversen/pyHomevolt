@@ -1,5 +1,12 @@
 """Constants for the Homevolt library."""
 
+# Connection settings
+DEFAULT_CONNECT_TIMEOUT = 10
+DEFAULT_READ_TIMEOUT = 30
+RETRY_COUNT = 3
+RETRY_BACKOFF_FACTOR = 2.0
+RETRY_STATUS_CODES = {502, 503, 504}
+
 # API endpoints
 ENDPOINT_EMS = "/ems.json"
 ENDPOINT_SCHEDULE = "/schedule.json"
