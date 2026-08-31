@@ -10,8 +10,10 @@ from typing import Any
 import aiohttp
 
 from .const import (
+    CONTROLLABLE_SCHEDULE_TYPE,
     DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_READ_TIMEOUT,
+    ENDPOINT_CONSOLE,
     ENDPOINT_EMS,
     ENDPOINT_PARAMS,
     ENDPOINT_SCHEDULE,
@@ -28,6 +30,29 @@ from .exceptions import (
 from .models import DeviceMetadata, Sensor
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _sum_phase_power(phases: list[dict[str, Any]]) -> int | float:
+    """Sum available phase power readings."""
+    return sum(phase.get("power") or 0 for phase in phases)
+
+
+_SUPPORTED_MANUAL_PARAMETERS = frozenset(
+    {
+        "setpoint",
+        "max_charge",
+        "max_discharge",
+        "min",
+        "max",
+        "min_soc",
+        "max_soc",
+        "import_limit",
+        "export_limit",
+        "grid_import_limit",
+        "grid_export_limit",
+        "offline",
+    }
+)
 
 
 class Homevolt:
@@ -62,6 +87,7 @@ class Homevolt:
             connect=connect_timeout,
             sock_read=read_timeout,
         )
+        self._control_lock = asyncio.Lock()
 
         self.unique_id: str | None = None
         self.sensors: dict[str, Sensor] = {}
@@ -94,6 +120,29 @@ class Homevolt:
         if self.current_schedule is None:
             return False
         return bool(self.current_schedule.get("local_mode", False))
+
+    @property
+    def battery_parameters_writable(self) -> bool:
+        """Check whether the current manual entry supports partial parameter writes."""
+        if not self.local_mode_enabled or self.current_schedule is None:
+            return False
+        if self.current_schedule.get("schedule_id") != "Manual Schedule":
+            return False
+        schedule_entries = self.current_schedule.get("schedule")
+        if not isinstance(schedule_entries, list) or len(schedule_entries) != 1:
+            return False
+        schedule_entry = schedule_entries[0]
+        if not isinstance(schedule_entry, dict):
+            return False
+        if schedule_entry.get("type") == 0:
+            return False
+        params = schedule_entry.get("params")
+        if not isinstance(params, dict):
+            return False
+        return not any(
+            value is not None and key not in _SUPPORTED_MANUAL_PARAMETERS
+            for key, value in params.items()
+        )
 
     @property
     def schedule_setpoint(self) -> int | None:
@@ -261,6 +310,247 @@ class Homevolt:
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
 
+    async def set_battery_parameters(
+        self,
+        setpoint: int | float | None = None,
+        max_charge: int | float | None = None,
+        max_discharge: int | float | None = None,
+        min_soc: int | float | None = None,
+        max_soc: int | float | None = None,
+        grid_import_limit: int | float | None = None,
+        grid_export_limit: int | float | None = None,
+    ) -> None:
+        """Update one or more parameters on the current manual schedule entry.
+
+        Local mode must already be enabled and exactly one schedule entry must exist.
+        Omitted parameters retain their current values.
+
+        Args:
+            setpoint: Power setpoint (W)
+            max_charge: Max charging power (W)
+            max_discharge: Max discharging power (W)
+            min_soc: Minimum state of charge (%)
+            max_soc: Maximum state of charge (%)
+            grid_import_limit: Optional grid import limit (W)
+            grid_export_limit: Optional grid export limit (W)
+        """
+        async with self._control_lock:
+            await self._set_battery_parameters(
+                setpoint=setpoint,
+                max_charge=max_charge,
+                max_discharge=max_discharge,
+                min_soc=min_soc,
+                max_soc=max_soc,
+                grid_import_limit=grid_import_limit,
+                grid_export_limit=grid_export_limit,
+            )
+
+    async def _set_battery_parameters(
+        self,
+        setpoint: int | float | None = None,
+        max_charge: int | float | None = None,
+        max_discharge: int | float | None = None,
+        min_soc: int | float | None = None,
+        max_soc: int | float | None = None,
+        grid_import_limit: int | float | None = None,
+        grid_export_limit: int | float | None = None,
+    ) -> None:
+        """Update battery parameters while holding the control lock.
+
+        Args:
+            setpoint: Power setpoint (W)
+            max_charge: Max charging power (W)
+            max_discharge: Max discharging power (W)
+            min_soc: Minimum state of charge (%)
+            max_soc: Maximum state of charge (%)
+            grid_import_limit: Optional grid import limit (W)
+            grid_export_limit: Optional grid export limit (W)
+        """
+        await self._ensure_session()
+        assert self._websession is not None
+
+        if not self.local_mode_enabled:
+            raise HomevoltDataError("Local mode must be enabled before battery control")
+        assert self.current_schedule is not None
+        schedule_entries = self.current_schedule.get("schedule")
+        if (
+            self.current_schedule.get("schedule_id") != "Manual Schedule"
+            or not isinstance(schedule_entries, list)
+            or len(schedule_entries) != 1
+        ):
+            raise HomevoltDataError("Battery parameters require exactly one Manual Schedule entry")
+        schedule_entry = schedule_entries[0]
+        if not isinstance(schedule_entry, dict):
+            raise HomevoltDataError("Manual Schedule entry is invalid")
+        if schedule_entry.get("type") == 0:
+            raise HomevoltDataError("Battery parameters are ignored in idle mode")
+        params = schedule_entry.get("params")
+        if not isinstance(params, dict):
+            raise HomevoltDataError("Manual Schedule parameters are missing")
+        unsupported_parameters = sorted(
+            key
+            for key, value in params.items()
+            if value is not None and key not in _SUPPORTED_MANUAL_PARAMETERS
+        )
+        if unsupported_parameters:
+            raise HomevoltDataError(
+                "Cannot preserve unsupported Manual Schedule parameters: "
+                f"{', '.join(unsupported_parameters)}"
+            )
+
+        setpoint_raw = setpoint if setpoint is not None else self.schedule["setpoint"]
+        setpoint_val: int | None = int(setpoint_raw) if setpoint_raw is not None else None
+
+        max_charge_raw = max_charge if max_charge is not None else self.schedule["max_charge"]
+        max_charge_val: int | None = int(max_charge_raw) if max_charge_raw is not None else None
+
+        max_discharge_raw = (
+            max_discharge if max_discharge is not None else self.schedule["max_discharge"]
+        )
+        max_discharge_val: int | None = (
+            int(max_discharge_raw) if max_discharge_raw is not None else None
+        )
+
+        min_soc_raw = min_soc if min_soc is not None else self.schedule["min_soc"]
+        min_soc_val: int | None = int(min_soc_raw) if min_soc_raw is not None else None
+
+        max_soc_raw = max_soc if max_soc is not None else self.schedule["max_soc"]
+        max_soc_val: int | None = int(max_soc_raw) if max_soc_raw is not None else None
+
+        grid_import_limit_val: int | None = (
+            int(grid_import_limit)
+            if grid_import_limit is not None
+            else self.schedule["grid_import_limit"]
+        )
+        grid_export_limit_val: int | None = (
+            int(grid_export_limit)
+            if grid_export_limit is not None
+            else self.schedule["grid_export_limit"]
+        )
+
+        nonnegative_parameters = {
+            "max_charge": max_charge_val,
+            "max_discharge": max_discharge_val,
+            "grid_import_limit": grid_import_limit_val,
+            "grid_export_limit": grid_export_limit_val,
+        }
+        invalid_parameters = sorted(
+            key for key, value in nonnegative_parameters.items() if value is not None and value < 0
+        )
+        if min_soc_val is not None and not 0 <= min_soc_val <= 100:
+            invalid_parameters.append("min_soc")
+        if max_soc_val is not None and not 0 <= max_soc_val <= 100:
+            invalid_parameters.append("max_soc")
+        if invalid_parameters:
+            raise HomevoltDataError(
+                f"Battery control parameters are invalid: {', '.join(invalid_parameters)}"
+            )
+        if min_soc_val is not None and max_soc_val is not None and min_soc_val > max_soc_val:
+            raise HomevoltDataError("Minimum state of charge cannot exceed maximum state of charge")
+
+        mode_int = self.schedule["mode"] if self.schedule["mode"] is not None else 0
+
+        command = self._build_sched_set_command(
+            mode_int=mode_int,
+            setpoint=setpoint_val,
+            max_charge=max_charge_val,
+            max_discharge=max_discharge_val,
+            min_soc=min_soc_val,
+            max_soc=max_soc_val,
+            grid_import_limit=grid_import_limit_val,
+            grid_export_limit=grid_export_limit_val,
+        )
+        _LOGGER.debug("Sending battery mode command: %s", command)
+        await self._post_console_command(command)
+
+        self.schedule["mode"] = mode_int
+        self.schedule["setpoint"] = setpoint_val
+        self.schedule["max_charge"] = max_charge_val
+        self.schedule["max_discharge"] = max_discharge_val
+        self.schedule["min_soc"] = min_soc_val
+        self.schedule["max_soc"] = max_soc_val
+        self.schedule["grid_import_limit"] = grid_import_limit_val
+        self.schedule["grid_export_limit"] = grid_export_limit_val
+
+    async def set_battery_mode(
+        self,
+        mode: str,
+    ) -> None:
+        """Replace the current schedule with an immediate operational mode.
+
+        Local mode must already be enabled. Known common parameters from the current
+        schedule are retained.
+
+        Args:
+            mode: Operational mode string such as ``idle`` or ``inverter_charge``.
+        """
+        async with self._control_lock:
+            await self._set_battery_mode(mode)
+
+    async def _set_battery_mode(self, mode: str) -> None:
+        """Set battery mode while holding the control lock."""
+        await self._ensure_session()
+        assert self._websession is not None
+
+        if not self.local_mode_enabled:
+            raise HomevoltDataError("Local mode must be enabled before battery control")
+
+        # Create reverse mapping for validation
+        valid_modes = {v: k for k, v in CONTROLLABLE_SCHEDULE_TYPE.items()}
+        if mode not in valid_modes:
+            raise ValueError(
+                f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
+            )
+        mode_int = valid_modes[mode]
+        setpoint_val = (
+            int(self.schedule["setpoint"]) if self.schedule["setpoint"] is not None else None
+        )
+        max_charge_val = (
+            int(self.schedule["max_charge"]) if self.schedule["max_charge"] is not None else None
+        )
+        max_discharge_val = (
+            int(self.schedule["max_discharge"])
+            if self.schedule["max_discharge"] is not None
+            else None
+        )
+        min_soc_val = (
+            int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
+        )
+        max_soc_val = (
+            int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
+        )
+        grid_import_limit_val = (
+            int(self.schedule["grid_import_limit"])
+            if self.schedule["grid_import_limit"] is not None
+            else None
+        )
+        grid_export_limit_val = (
+            int(self.schedule["grid_export_limit"])
+            if self.schedule["grid_export_limit"] is not None
+            else None
+        )
+        command = self._build_sched_set_command(
+            mode_int=mode_int,
+            setpoint=setpoint_val,
+            max_charge=max_charge_val,
+            max_discharge=max_discharge_val,
+            min_soc=min_soc_val,
+            max_soc=max_soc_val,
+            grid_import_limit=grid_import_limit_val,
+            grid_export_limit=grid_export_limit_val,
+        )
+        _LOGGER.debug("Sending battery mode command: %s", command)
+        await self._post_console_command(command)
+
+        self.schedule["mode"] = mode_int
+        self.schedule["setpoint"] = setpoint_val
+        self.schedule["max_charge"] = max_charge_val
+        self.schedule["max_discharge"] = max_discharge_val
+        self.schedule["min_soc"] = min_soc_val
+        self.schedule["max_soc"] = max_soc_val
+        self.schedule["grid_import_limit"] = grid_import_limit_val
+        self.schedule["grid_export_limit"] = grid_export_limit_val
+
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""
         await self._set_local_mode(1)
@@ -290,6 +580,49 @@ class Homevolt:
         except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
         _LOGGER.debug("Local mode set to %s", value)
+
+        if self.current_schedule is not None:
+            self.current_schedule["local_mode"] = bool(value)
+
+    def _build_sched_set_command(
+        self,
+        mode_int: int,
+        setpoint: int | None,
+        max_charge: int | None,
+        max_discharge: int | None,
+        min_soc: int | None,
+        max_soc: int | None,
+        grid_import_limit: int | None,
+        grid_export_limit: int | None,
+    ) -> str:
+        """Build a sched_set console command."""
+        cmd_parts = [f"sched_set {mode_int}"]
+        if setpoint is not None:
+            cmd_parts.append(f"-s {setpoint}")
+        if max_charge is not None:
+            cmd_parts.append(f"-c {max_charge}")
+        if max_discharge is not None:
+            cmd_parts.append(f"-d {max_discharge}")
+        if min_soc is not None:
+            cmd_parts.append(f"--min {min_soc}")
+        if max_soc is not None:
+            cmd_parts.append(f"--max {max_soc}")
+        if grid_import_limit is not None:
+            cmd_parts.append(f"-l {grid_import_limit}")
+        if grid_export_limit is not None:
+            cmd_parts.append(f"-x {grid_export_limit}")
+        return " ".join(cmd_parts)
+
+    async def _post_console_command(self, command: str) -> None:
+        """Send a console command using the form payload expected by the device."""
+        url = f"{self.base_url}{ENDPOINT_CONSOLE}"
+        data = {"cmd": command}
+
+        try:
+            await self._post(url, data)
+        except HomevoltConnectionError as err:
+            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
+        _LOGGER.debug("Battery mode set successfully")
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""
@@ -487,7 +820,7 @@ class Homevolt:
                 model=sensor_type,
             )
 
-            total_power = sum(phase["power"] for phase in sensor.get("phase", []))
+            total_power = _sum_phase_power(sensor.get("phase", []))
 
             self.sensors[f"Power {sensor_type}"] = Sensor(
                 value=total_power,
@@ -559,12 +892,27 @@ class Homevolt:
         # Track current battery control state
         self.schedule["mode"] = schedule.get("type")
         self.schedule["setpoint"] = params.get("setpoint")
-        self.schedule["max_charge"] = schedule.get("max_charge")
-        self.schedule["max_discharge"] = schedule.get("max_discharge")
-        self.schedule["min_soc"] = params.get("min_soc") or params.get("min")
-        self.schedule["max_soc"] = params.get("max_soc") or params.get("max")
-        self.schedule["grid_import_limit"] = params.get("grid_import_limit")
-        self.schedule["grid_export_limit"] = params.get("grid_export_limit")
+        self.schedule["max_charge"] = params.get("max_charge")
+        self.schedule["max_discharge"] = params.get("max_discharge")
+        min_soc = schedule.get("min")
+        if min_soc is None:
+            min_soc = params.get("min_soc", params.get("min"))
+        self.schedule["min_soc"] = min_soc
+
+        max_soc = schedule.get("max")
+        if max_soc is None:
+            max_soc = params.get("max_soc", params.get("max"))
+        self.schedule["max_soc"] = max_soc
+
+        grid_import_limit = params.get("import_limit")
+        if grid_import_limit is None:
+            grid_import_limit = params.get("grid_import_limit")
+        self.schedule["grid_import_limit"] = grid_import_limit
+
+        grid_export_limit = params.get("export_limit")
+        if grid_export_limit is None:
+            grid_export_limit = params.get("grid_export_limit")
+        self.schedule["grid_export_limit"] = grid_export_limit
         self.schedule["threshold_high"] = params.get("threshold_high")
         self.schedule["threshold_low"] = params.get("threshold_low")
         self.schedule["freq_reg_droop_up"] = params.get("freq_reg_droop_up")

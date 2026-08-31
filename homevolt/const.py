@@ -27,6 +27,11 @@ SCHEDULE_TYPE = {
     9: "full_solar_export",
 }
 
+# Modes confirmed to produce a matching manual schedule on current firmware.
+CONTROLLABLE_SCHEDULE_TYPE = {
+    mode: option for mode, option in SCHEDULE_TYPE.items() if mode in {0, 1, 2, 6, 7}
+}
+
 # Device type mappings for sensors
 DEVICE_MAP = {
     "grid": "grid",
