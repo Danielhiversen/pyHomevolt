@@ -417,15 +417,22 @@ class Homevolt:
         max_soc_raw = max_soc if max_soc is not None else self.schedule["max_soc"]
         max_soc_val: int | None = int(max_soc_raw) if max_soc_raw is not None else None
 
-        grid_import_limit_val: int | None = (
-            int(grid_import_limit)
+        grid_import_limit_raw = (
+            grid_import_limit
             if grid_import_limit is not None
             else self.schedule["grid_import_limit"]
         )
-        grid_export_limit_val: int | None = (
-            int(grid_export_limit)
+        grid_import_limit_val: int | None = (
+            int(grid_import_limit_raw) if grid_import_limit_raw is not None else None
+        )
+
+        grid_export_limit_raw = (
+            grid_export_limit
             if grid_export_limit is not None
             else self.schedule["grid_export_limit"]
+        )
+        grid_export_limit_val: int | None = (
+            int(grid_export_limit_raw) if grid_export_limit_raw is not None else None
         )
 
         nonnegative_parameters = {

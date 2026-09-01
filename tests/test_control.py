@@ -208,6 +208,32 @@ def test_set_battery_parameters_preserves_other_values() -> None:
     assert client.schedule["max_charge"] == 250
 
 
+def test_set_battery_parameters_coerces_preserved_grid_limits() -> None:
+    """Parsed grid limits must remain integer command arguments when preserved."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+    }
+    client.schedule.update(
+        {
+            "mode": 5,
+            "setpoint": 100,
+            "max_charge": 200,
+            "grid_import_limit": 400.0,
+            "grid_export_limit": "500",
+        }
+    )
+    client._post_console_command = AsyncMock()
+
+    asyncio.run(client.set_battery_parameters(max_charge=250))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250 -l 400 -x 500")
+    assert client.schedule["grid_import_limit"] == 400
+    assert client.schedule["grid_export_limit"] == 500
+
+
 def test_set_battery_parameters_requires_manual_schedule() -> None:
     """Do not turn a single cloud schedule into an immediate manual command."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
