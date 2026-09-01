@@ -455,7 +455,7 @@ class Homevolt:
         if min_soc_val is not None and max_soc_val is not None and min_soc_val > max_soc_val:
             raise HomevoltDataError("Minimum state of charge cannot exceed maximum state of charge")
 
-        mode_int = self.schedule["mode"] if self.schedule["mode"] is not None else 0
+        mode_int = int(schedule_entry["type"])
 
         command = self._build_sched_set_command(
             mode_int=mode_int,
@@ -877,17 +877,6 @@ class Homevolt:
         """Parse schedule JSON response and track battery control state."""
         self.current_schedule = schedule_data
 
-        if not self.unique_id:
-            return
-
-        ems_device_id = f"ems_{self.unique_id}"
-
-        self.sensors["Schedule id"] = Sensor(
-            value=schedule_data.get("schedule_id"),
-            type="schedule_id",
-            device_identifier=ems_device_id,
-        )
-
         schedule: dict[str, Any] = (
             schedule_data.get("schedule", [{}])[0]
             if schedule_data.get("schedule")
@@ -924,6 +913,17 @@ class Homevolt:
         self.schedule["threshold_low"] = params.get("threshold_low")
         self.schedule["freq_reg_droop_up"] = params.get("freq_reg_droop_up")
         self.schedule["freq_reg_droop_down"] = params.get("freq_reg_droop_down")
+
+        if not self.unique_id:
+            return
+
+        ems_device_id = f"ems_{self.unique_id}"
+
+        self.sensors["Schedule id"] = Sensor(
+            value=schedule_data.get("schedule_id"),
+            type="schedule_id",
+            device_identifier=ems_device_id,
+        )
 
         self.sensors["Schedule Type"] = Sensor(
             value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
