@@ -667,6 +667,63 @@ def test_set_battery_parameters_rejects_readback_mismatch() -> None:
         asyncio.run(client.set_battery_parameters(setpoint=600))
 
 
+def test_set_battery_parameters_reconciles_timeout_with_device_state() -> None:
+    """Treat an ambiguous timeout as success when read-back matches the request."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+
+    async def read_applied_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"setpoint": 600, "offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_applied_schedule)
+
+    asyncio.run(client.set_battery_parameters(setpoint=600))
+
+    assert session.attempts == 1
+    assert client.schedule["setpoint"] == 600
+
+
+def test_set_battery_parameters_preserves_unknown_outcome_on_timeout_mismatch() -> None:
+    """Keep the ambiguous-write signal when read-back does not match the request."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+
+    async def read_unchanged_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_unchanged_schedule)
+
+    with pytest.raises(HomevoltCommandOutcomeUnknownError, match="Mutation outcome is unknown"):
+        asyncio.run(client.set_battery_parameters(setpoint=600))
+
+    assert session.attempts == 1
+    client.fetch_schedule_data.assert_awaited_once()
+
+
 @pytest.mark.parametrize(
     ("mode", "parameters"),
     [

@@ -554,8 +554,17 @@ class Homevolt:
             grid_export_limit=grid_export_limit_val,
         )
         _LOGGER.debug("Sending battery control command: %s", command)
-        await self._post_console_command(command)
-        await self._fetch_schedule_after_mutation()
+        outcome_unknown: HomevoltCommandOutcomeUnknownError | None = None
+        try:
+            await self._post_console_command(command)
+        except HomevoltCommandOutcomeUnknownError as err:
+            outcome_unknown = err
+            try:
+                await self.fetch_schedule_data()
+            except (HomevoltConnectionError, HomevoltDataError):
+                raise err
+        else:
+            await self._fetch_schedule_after_mutation()
         expected_parameters = {
             "setpoint": setpoint_val,
             "max_charge": max_charge_val,
@@ -569,6 +578,8 @@ class Homevolt:
             observed = self.schedule[name]
             expected = expected_parameters[name]
             if observed != expected:
+                if outcome_unknown is not None:
+                    raise outcome_unknown
                 raise HomevoltCommandVerificationError(
                     f"Device reported {name} {observed}; requested {expected}"
                 )
