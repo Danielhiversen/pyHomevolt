@@ -125,12 +125,9 @@ async def main():
             # Replace the current schedule with immediate inverter-charge control.
             await homevolt_connection.set_battery_mode("inverter_charge")
 
-            # Refresh once so the new Manual Schedule entry can be updated safely.
-            await homevolt_connection.fetch_schedule_data()
+            # Set a verified fixed-power charge target.
             await homevolt_connection.set_battery_parameters(
-                max_charge=3000,
-                min_soc=20,
-                max_soc=90,
+                setpoint=500,
             )
 
 
@@ -153,8 +150,11 @@ does not create a matching manual schedule for them.
 
 Battery writes require local mode to be enabled first. `set_battery_mode()` uses the
 device's `sched_set` command, so it replaces the complete current schedule with one
-immediate `Manual Schedule` entry. `set_battery_parameters()` only accepts that
-single manual entry and refuses writes that would discard unsupported parameters.
+immediate `Manual Schedule` entry without carrying parameters from the previous
+mode. `set_battery_parameters()` only accepts independently verified parameters for
+that mode: `setpoint` for inverter charge/discharge and grid import/export limits
+for frequency reserve. Use `writable_battery_parameters` to discover the current
+set. Every mutation is read back from the device before success is reported.
 
 ## API Reference
 
@@ -177,6 +177,7 @@ Initialize a Homevolt connection.
 - `device_metadata` (dict[str, DeviceMetadata]): Dictionary of device metadata
 - `current_schedule` (dict | None): Current schedule information
 - `battery_parameters_writable` (bool): Whether the current manual entry supports partial writes
+- `writable_battery_parameters` (frozenset[str]): Parameters independently writable in the current mode
 
 #### Methods
 

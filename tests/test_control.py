@@ -6,12 +6,24 @@ import asyncio
 import types
 from collections.abc import Mapping
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import aiohttp
 import pytest
 
-from homevolt import Homevolt, HomevoltConnectionError, HomevoltDataError
+import homevolt
+from homevolt import (
+    Homevolt,
+    HomevoltCommandOutcomeUnknownError,
+    HomevoltCommandVerificationError,
+    HomevoltConnectionError,
+    HomevoltDataError,
+)
+
+
+def test_command_outcome_unknown_error_is_public() -> None:
+    """Expose ambiguous mutation outcomes to library consumers."""
+    assert hasattr(homevolt, "HomevoltCommandOutcomeUnknownError")
 
 
 class FakeResponse:
@@ -64,6 +76,26 @@ class FakeSession:
         """Capture a POST and return its response context manager."""
         self.posts.append((url, data, auth, timeout))
         return self.response
+
+
+class TimeoutSession(FakeSession):
+    """Raise a timeout for every mutation request."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.attempts = 0
+
+    def post(
+        self,
+        url: str,
+        *,
+        data: Any,
+        auth: aiohttp.BasicAuth | None,
+        timeout: aiohttp.ClientTimeout,
+    ) -> FakeResponse:
+        """Record one ambiguous mutation attempt."""
+        self.attempts += 1
+        raise TimeoutError
 
 
 def test_build_sched_set_command_uses_documented_flags() -> None:
@@ -275,7 +307,7 @@ def test_parse_schedule_discards_invalid_control_values() -> None:
         }
     )
 
-    assert client.schedule_mode == 0
+    assert client.schedule_mode is None
     assert client.schedule_setpoint is None
     assert client.schedule_max_charge is None
     assert client.schedule_max_discharge is None
@@ -316,61 +348,56 @@ def test_set_battery_parameters_requires_one_manual_entry() -> None:
     client._post_console_command.assert_not_awaited()
 
 
-def test_set_battery_parameters_preserves_other_values() -> None:
-    """Changing one parameter retains the rest of the manual entry."""
+def test_set_battery_parameters_preserves_compatible_grid_limit() -> None:
+    """Changing one grid limit retains the other verified mode-six limit."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100, "offline": False}}],
+        "schedule": [
+            {
+                "type": 6,
+                "params": {
+                    "import_limit": 400,
+                    "export_limit": 500,
+                    "offline": False,
+                },
+            }
+        ],
     }
     client.schedule.update(
         {
-            "mode": 5,
-            "setpoint": 100,
-            "max_charge": 200,
-            "max_discharge": 300,
-            "min_soc": 20,
-            "max_soc": 90,
+            "mode": 6,
             "grid_import_limit": 400,
             "grid_export_limit": 500,
         }
     )
-    client._post_console_command = AsyncMock()
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
 
-    assert client.battery_parameters_writable
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [
+                    {
+                        "type": 6,
+                        "params": {
+                            "import_limit": 450,
+                            "export_limit": 500,
+                            "offline": False,
+                        },
+                    }
+                ],
+            }
+        )
 
-    asyncio.run(client.set_battery_parameters(max_charge=250))
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
 
-    client._post_console_command.assert_awaited_once_with(
-        "sched_set 5 -s 100 -c 250 -d 300 --min 20 --max 90 -l 400 -x 500"
-    )
-    assert client.schedule["max_charge"] == 250
+    asyncio.run(client.set_battery_parameters(grid_import_limit=450))
 
-
-def test_set_battery_parameters_coerces_preserved_grid_limits() -> None:
-    """Parsed grid limits must remain integer command arguments when preserved."""
-    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
-    client.current_schedule = {
-        "local_mode": True,
-        "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
-    }
-    client.schedule.update(
-        {
-            "mode": 5,
-            "setpoint": 100,
-            "max_charge": 200,
-            "grid_import_limit": 400.0,
-            "grid_export_limit": "500",
-        }
-    )
-    client._post_console_command = AsyncMock()
-
-    asyncio.run(client.set_battery_parameters(max_charge=250))
-
-    client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250 -l 400 -x 500")
-    assert client.schedule["grid_import_limit"] == 400
+    client._post_console_command.assert_awaited_once_with("sched_set 6 -l 450 -x 500")
+    assert client.schedule["grid_import_limit"] == 450
     assert client.schedule["grid_export_limit"] == 500
 
 
@@ -380,15 +407,26 @@ def test_set_battery_parameters_uses_manual_entry_mode_when_cache_is_empty() -> 
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+        "schedule": [{"type": 1, "params": {"setpoint": 100}}],
     }
     client.schedule.update({"mode": None, "setpoint": 100})
-    client._post_console_command = AsyncMock()
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
 
-    asyncio.run(client.set_battery_parameters(max_charge=250))
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"setpoint": 250}}],
+            }
+        )
 
-    client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250")
-    assert client.schedule["mode"] == 5
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
+
+    asyncio.run(client.set_battery_parameters(setpoint=250))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 1 -s 250")
+    assert client.schedule["mode"] == 1
 
 
 @pytest.mark.parametrize(
@@ -476,10 +514,36 @@ def test_battery_parameters_writable_accepts_numeric_string_mode() -> None:
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": "5", "params": {"setpoint": 100}}],
+        "schedule": [{"type": "1", "params": {"setpoint": 100}}],
     }
 
     assert client.battery_parameters_writable
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        (0, frozenset()),
+        (1, frozenset({"setpoint"})),
+        (2, frozenset({"setpoint"})),
+        (6, frozenset({"grid_import_limit", "grid_export_limit"})),
+        (7, frozenset()),
+    ],
+)
+def test_writable_battery_parameters_are_mode_specific(
+    mode: int,
+    expected: frozenset[str],
+) -> None:
+    """Advertise only parameters independently verified for the active mode."""
+    client = Homevolt("homevolt.local")
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": mode, "params": {"offline": False}}],
+    }
+
+    assert client.writable_battery_parameters == expected
+    assert client.battery_parameters_writable is bool(expected)
 
 
 def test_set_battery_parameters_rejects_unsupported_existing_parameters() -> None:
@@ -501,23 +565,118 @@ def test_set_battery_parameters_rejects_unsupported_existing_parameters() -> Non
     assert not client.battery_parameters_writable
 
     with pytest.raises(HomevoltDataError, match="fcr_n_power"):
-        asyncio.run(client.set_battery_parameters(max_charge=250))
+        asyncio.run(client.set_battery_parameters(grid_import_limit=250))
 
     client._post_console_command.assert_not_awaited()
 
 
+def test_set_battery_parameters_rejects_parameter_not_writable_for_mode() -> None:
+    """Reject a field whose independent firmware behavior is not verified."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+    client._post_console_command = AsyncMock()
+
+    with pytest.raises(HomevoltDataError, match="max_charge.*mode 1"):
+        asyncio.run(client.set_battery_parameters(max_charge=1000))
+
+    client._post_console_command.assert_not_awaited()
+
+
+def test_set_battery_parameters_sends_only_mode_compatible_fields() -> None:
+    """Do not carry stale fields into an independently writable setpoint command."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+    }
+    client.schedule.update(
+        {
+            "mode": 1,
+            "setpoint": 500,
+            "max_charge": 2000,
+            "max_discharge": 3000,
+            "min_soc": 20,
+            "max_soc": 90,
+            "grid_import_limit": 4000,
+            "grid_export_limit": 5000,
+        }
+    )
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [
+                    {
+                        "type": 1,
+                        "params": {"setpoint": 600, "offline": False},
+                    }
+                ],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
+
+    asyncio.run(client.set_battery_parameters(setpoint=600))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 1 -s 600")
+    client.fetch_schedule_data.assert_awaited_once()
+    assert client.schedule["setpoint"] == 600
+    assert client.schedule["max_charge"] is None
+
+
+def test_set_battery_parameters_rejects_readback_mismatch() -> None:
+    """Do not report success when firmware keeps the previous parameter value."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500, "offline": False}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_unchanged_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [
+                    {
+                        "type": 1,
+                        "params": {"setpoint": 500, "offline": False},
+                    }
+                ],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_unchanged_schedule)
+
+    with pytest.raises(
+        HomevoltCommandVerificationError,
+        match="setpoint.*500.*requested 600",
+    ):
+        asyncio.run(client.set_battery_parameters(setpoint=600))
+
+
 @pytest.mark.parametrize(
-    "parameters",
+    ("mode", "parameters"),
     [
-        {"max_charge": -1},
-        {"max_discharge": -1},
-        {"min_soc": -1},
-        {"max_soc": 101},
-        {"grid_import_limit": -1},
-        {"grid_export_limit": -1},
+        (1, {"setpoint": -1}),
+        (6, {"grid_import_limit": -1}),
+        (6, {"grid_export_limit": -1}),
     ],
 )
 def test_set_battery_parameters_rejects_invalid_limits(
+    mode: int,
     parameters: dict[str, int],
 ) -> None:
     """Reject unsafe limits before sending a console command."""
@@ -525,9 +684,9 @@ def test_set_battery_parameters_rejects_invalid_limits(
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+        "schedule": [{"type": mode, "params": {"setpoint": 100}}],
     }
-    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 20, "max_soc": 90})
+    client.schedule.update({"mode": mode, "setpoint": 100})
     client._post_console_command = AsyncMock()
 
     with pytest.raises(HomevoltDataError, match="invalid"):
@@ -537,28 +696,28 @@ def test_set_battery_parameters_rejects_invalid_limits(
 
 
 @pytest.mark.parametrize(
-    ("parameter", "value"),
+    ("mode", "parameter", "value"),
     [
-        ("setpoint", 200.5),
-        ("max_charge", True),
-        ("max_discharge", "invalid"),
-        ("min_soc", 20.5),
-        ("max_soc", False),
-        ("grid_import_limit", 400.5),
-        ("grid_export_limit", "invalid"),
+        (1, "setpoint", 200.5),
+        (1, "setpoint", True),
+        (1, "setpoint", "invalid"),
+        (6, "grid_import_limit", 400.5),
+        (6, "grid_export_limit", "invalid"),
     ],
 )
 def test_set_battery_parameters_rejects_non_integer_caller_values(
-    parameter: str, value: Any
+    mode: int,
+    parameter: str,
+    value: Any,
 ) -> None:
     """Caller values must be whole numbers and reject booleans or other types."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+        "schedule": [{"type": mode, "params": {"setpoint": 100}}],
     }
-    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 20, "max_soc": 90})
+    client.schedule.update({"mode": mode, "setpoint": 100})
     client._post_console_command = AsyncMock()
 
     with pytest.raises(HomevoltDataError, match=f"{parameter} is invalid"):
@@ -573,31 +732,25 @@ def test_set_battery_parameters_accepts_integral_float() -> None:
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+        "schedule": [{"type": 1, "params": {"setpoint": 100}}],
     }
-    client.schedule.update({"mode": 5, "setpoint": 100})
-    client._post_console_command = AsyncMock()
+    client.schedule.update({"mode": 1, "setpoint": 100})
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
 
-    asyncio.run(client.set_battery_parameters(max_charge=250.0))
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"setpoint": 250}}],
+            }
+        )
 
-    client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250")
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
 
+    asyncio.run(client.set_battery_parameters(setpoint=250.0))
 
-def test_set_battery_parameters_rejects_inverted_soc_range() -> None:
-    """Minimum state of charge cannot exceed the maximum."""
-    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
-    client.current_schedule = {
-        "local_mode": True,
-        "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
-    }
-    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 20, "max_soc": 90})
-    client._post_console_command = AsyncMock()
-
-    with pytest.raises(HomevoltDataError, match="Minimum state of charge"):
-        asyncio.run(client.set_battery_parameters(min_soc=95))
-
-    client._post_console_command.assert_not_awaited()
+    client._post_console_command.assert_awaited_once_with("sched_set 1 -s 250")
 
 
 def test_battery_writes_are_serialized() -> None:
@@ -606,43 +759,144 @@ def test_battery_writes_are_serialized() -> None:
     client.current_schedule = {
         "local_mode": True,
         "schedule_id": "Manual Schedule",
-        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+        "schedule": [{"type": 1, "params": {"setpoint": 100}}],
     }
-    client.schedule.update(
-        {
-            "mode": 5,
-            "setpoint": 100,
-            "max_charge": 200,
-            "max_discharge": 300,
-        }
-    )
+    client.schedule.update({"mode": 1, "setpoint": 100})
     active_writes = 0
     peak_writes = 0
 
-    async def capture_write(command: str) -> None:
+    async def capture_write(command: str) -> str:
         nonlocal active_writes, peak_writes
         active_writes += 1
         peak_writes = max(peak_writes, active_writes)
         await asyncio.sleep(0)
+        setpoint = int(command.rsplit(" ", 1)[1])
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"setpoint": setpoint}}],
+            }
+        )
         active_writes -= 1
+        return "Command executed successfully"
 
     client._post_console_command = AsyncMock(side_effect=capture_write)
+    client.fetch_schedule_data = AsyncMock()
 
     async def write_concurrently() -> None:
         await asyncio.gather(
-            client.set_battery_parameters(max_charge=250),
-            client.set_battery_parameters(max_discharge=350),
+            client.set_battery_parameters(setpoint=250),
+            client.set_battery_parameters(setpoint=350),
         )
 
     asyncio.run(write_concurrently())
 
     assert peak_writes == 1
-    assert client.schedule["max_charge"] == 250
-    assert client.schedule["max_discharge"] == 350
+    assert client.schedule["setpoint"] == 350
 
 
-def test_set_battery_mode_preserves_known_parameters() -> None:
-    """Changing mode preserves the currently reported control parameters."""
+def test_set_battery_mode_uses_observed_readback_state() -> None:
+    """A successful write publishes only the schedule returned by the device."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client.schedule.update({"mode": 5, "setpoint": 100, "max_charge": 200})
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_normalized_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [
+                    {
+                        "type": 7,
+                        "max": 95,
+                        "params": {"offline": False},
+                    }
+                ],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_normalized_schedule)
+
+    asyncio.run(client.set_battery_mode("solar_charge"))
+
+    client.fetch_schedule_data.assert_awaited_once()
+    assert client.schedule["mode"] == 7
+    assert client.schedule["setpoint"] is None
+    assert client.schedule["max_charge"] is None
+    assert client.schedule["max_soc"] == 95
+
+
+def test_set_battery_mode_rejects_normalized_mismatched_mode() -> None:
+    """Do not report success when firmware normalizes the request to idle."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_idle_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 0, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_idle_schedule)
+
+    with pytest.raises(
+        HomevoltCommandVerificationError,
+        match="reported mode 0 after requesting 7",
+    ):
+        asyncio.run(client.set_battery_mode("solar_charge"))
+
+    assert client.schedule["mode"] == 0
+
+
+def test_set_battery_mode_reports_unknown_outcome_when_readback_fails() -> None:
+    """Distinguish an accepted command with unavailable confirmation."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+    client.fetch_schedule_data = AsyncMock(
+        side_effect=HomevoltConnectionError("read-back unavailable")
+    )
+
+    with pytest.raises(
+        HomevoltCommandOutcomeUnknownError,
+        match="read-back unavailable",
+    ):
+        asyncio.run(client.set_battery_mode("idle"))
+
+
+def test_set_battery_mode_reconciles_timeout_with_device_state() -> None:
+    """Treat an ambiguous timeout as success only when read-back matches."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+
+    async def read_applied_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 1, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_applied_schedule)
+
+    asyncio.run(client.set_battery_mode("inverter_charge"))
+
+    assert session.attempts == 1
+    client.fetch_schedule_data.assert_awaited_once()
+    assert client.schedule["mode"] == 1
+
+
+def test_set_battery_mode_does_not_carry_parameters_between_modes() -> None:
+    """A mode change must not send stale or incompatible schedule parameters."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {"local_mode": True, "schedule": [{}]}
     client.schedule.update(
@@ -657,56 +911,22 @@ def test_set_battery_mode_preserves_known_parameters() -> None:
             "grid_export_limit": 500,
         }
     )
-    client._post_console_command = AsyncMock()
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_solar_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 7, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_solar_schedule)
 
     asyncio.run(client.set_battery_mode("solar_charge"))
 
-    client._post_console_command.assert_awaited_once_with(
-        "sched_set 7 -s 100 -c 200 -d 300 --min 20 --max 90 -l 400 -x 500"
-    )
-
-
-def test_set_battery_mode_drops_invalid_preserved_parameters() -> None:
-    """A mode change must not echo unsafe device values back to the device."""
-    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
-    client.current_schedule = {"local_mode": True, "schedule": [{}]}
-    client.schedule.update(
-        {
-            "mode": 5,
-            "setpoint": -100,
-            "max_charge": -200,
-            "max_discharge": -300,
-            "min_soc": -1,
-            "max_soc": 150,
-            "grid_import_limit": -400,
-            "grid_export_limit": -500,
-        }
-    )
-    client._post_console_command = AsyncMock()
-
-    asyncio.run(client.set_battery_mode("solar_charge"))
-
-    client._post_console_command.assert_awaited_once_with("sched_set 7 -s -100")
-    assert client.schedule["max_charge"] is None
-    assert client.schedule["max_discharge"] is None
-    assert client.schedule["min_soc"] is None
-    assert client.schedule["max_soc"] is None
-    assert client.schedule["grid_import_limit"] is None
-    assert client.schedule["grid_export_limit"] is None
-
-
-def test_set_battery_mode_drops_inverted_preserved_soc_range() -> None:
-    """A mode change must not preserve a minimum SOC above the maximum SOC."""
-    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
-    client.current_schedule = {"local_mode": True, "schedule": [{}]}
-    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 90, "max_soc": 20})
-    client._post_console_command = AsyncMock()
-
-    asyncio.run(client.set_battery_mode("solar_charge"))
-
-    client._post_console_command.assert_awaited_once_with("sched_set 7 -s 100")
-    assert client.schedule["min_soc"] is None
-    assert client.schedule["max_soc"] is None
+    client._post_console_command.assert_awaited_once_with("sched_set 7")
 
 
 def test_set_idle_clears_preserved_parameters() -> None:
@@ -725,7 +945,18 @@ def test_set_idle_clears_preserved_parameters() -> None:
             "grid_export_limit": 500,
         }
     )
-    client._post_console_command = AsyncMock()
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_idle_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 0, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_idle_schedule)
 
     asyncio.run(client.set_battery_mode("idle"))
 
@@ -786,6 +1017,25 @@ def test_console_command_uses_urlencoded_form_data() -> None:
     assert timeout is client._timeout
 
 
+def test_console_command_returns_device_response() -> None:
+    """Return the console body so command acceptance can be evaluated."""
+    session = FakeSession(FakeResponse(text="Command executed successfully"))
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+
+    response = asyncio.run(client._post_console_command("sched_set 0"))
+
+    assert response == "Command executed successfully"
+
+
+def test_console_command_rejects_error_response() -> None:
+    """Raise when the console reports rejection despite an HTTP 200 response."""
+    session = FakeSession(FakeResponse(text="Error: invalid arguments"))
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+
+    with pytest.raises(HomevoltDataError, match="invalid arguments"):
+        asyncio.run(client._post_console_command("sched_set 1 -c 250"))
+
+
 def test_console_command_failure_is_not_described_as_mode_change() -> None:
     """Shared console transport errors must describe parameter writes accurately."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
@@ -796,6 +1046,20 @@ def test_console_command_failure_is_not_described_as_mode_change() -> None:
         match="^Failed to send console command: offline$",
     ):
         asyncio.run(client._post_console_command("sched_set 1 -c 250"))
+
+
+def test_console_mutation_is_not_blindly_retried_after_timeout() -> None:
+    """Do not resend a command whose first outcome is unknown."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+
+    with (
+        patch("homevolt.homevolt.asyncio.sleep", new_callable=AsyncMock),
+        pytest.raises(HomevoltConnectionError),
+    ):
+        asyncio.run(client._post_console_command("sched_set 1 -s 500"))
+
+    assert session.attempts == 1
 
 
 def test_http_error_is_wrapped_with_response_context() -> None:
@@ -813,6 +1077,17 @@ def test_local_mode_write_remains_non_persistent() -> None:
     client = Homevolt("homevolt.local", "secret", session)  # type: ignore[arg-type]
     client.current_schedule = {"local_mode": False}
 
+    async def read_enabled_local_mode() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 0, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_enabled_local_mode)
+
     asyncio.run(client.enable_local_mode())
 
     assert len(session.posts) == 1
@@ -822,3 +1097,50 @@ def test_local_mode_write_remains_non_persistent() -> None:
     assert auth == aiohttp.BasicAuth("admin", "secret")
     assert timeout is client._timeout
     assert client.local_mode_enabled
+
+
+def test_local_mode_uses_observed_readback_state() -> None:
+    """Publish local mode only after the device reports the requested value."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": False, "schedule": []}
+    client._post = AsyncMock(return_value="OK")
+
+    async def read_enabled_local_mode() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 0, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_enabled_local_mode)
+
+    asyncio.run(client.enable_local_mode())
+
+    client.fetch_schedule_data.assert_awaited_once()
+    assert client.local_mode_enabled
+
+
+def test_local_mode_rejects_readback_mismatch() -> None:
+    """Do not report success when local mode remains unchanged."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": False, "schedule": []}
+    client._post = AsyncMock(return_value="OK")
+
+    async def read_disabled_local_mode() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": False,
+                "schedule_id": "Partner Schedule",
+                "schedule": [],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_disabled_local_mode)
+
+    with pytest.raises(
+        HomevoltCommandVerificationError,
+        match="local mode False.*requested True",
+    ):
+        asyncio.run(client.enable_local_mode())
