@@ -55,6 +55,18 @@ def _coerce_schedule_mode(value: Any) -> int | None:
     return mode if mode in SCHEDULE_TYPE else None
 
 
+def _coerce_nonnegative_int(value: Any) -> int | None:
+    """Coerce a device value when it is a non-negative integer."""
+    coerced = _coerce_optional_int(value)
+    return coerced if coerced is None or coerced >= 0 else None
+
+
+def _coerce_soc(value: Any) -> int | None:
+    """Coerce a device state-of-charge value when it is within range."""
+    coerced = _coerce_optional_int(value)
+    return coerced if coerced is None or 0 <= coerced <= 100 else None
+
+
 def _coerce_caller_int(name: str, value: Any) -> int:
     """Validate and coerce a caller-provided whole-number parameter."""
     if (
@@ -554,35 +566,16 @@ class Homevolt:
             grid_import_limit_val = None
             grid_export_limit_val = None
         else:
-            setpoint_val = (
-                int(self.schedule["setpoint"]) if self.schedule["setpoint"] is not None else None
-            )
-            max_charge_val = (
-                int(self.schedule["max_charge"])
-                if self.schedule["max_charge"] is not None
-                else None
-            )
-            max_discharge_val = (
-                int(self.schedule["max_discharge"])
-                if self.schedule["max_discharge"] is not None
-                else None
-            )
-            min_soc_val = (
-                int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
-            )
-            max_soc_val = (
-                int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
-            )
-            grid_import_limit_val = (
-                int(self.schedule["grid_import_limit"])
-                if self.schedule["grid_import_limit"] is not None
-                else None
-            )
-            grid_export_limit_val = (
-                int(self.schedule["grid_export_limit"])
-                if self.schedule["grid_export_limit"] is not None
-                else None
-            )
+            setpoint_val = _coerce_optional_int(self.schedule["setpoint"])
+            max_charge_val = _coerce_nonnegative_int(self.schedule["max_charge"])
+            max_discharge_val = _coerce_nonnegative_int(self.schedule["max_discharge"])
+            min_soc_val = _coerce_soc(self.schedule["min_soc"])
+            max_soc_val = _coerce_soc(self.schedule["max_soc"])
+            if min_soc_val is not None and max_soc_val is not None and min_soc_val > max_soc_val:
+                min_soc_val = None
+                max_soc_val = None
+            grid_import_limit_val = _coerce_nonnegative_int(self.schedule["grid_import_limit"])
+            grid_export_limit_val = _coerce_nonnegative_int(self.schedule["grid_export_limit"])
         command = self._build_sched_set_command(
             mode_int=mode_int,
             setpoint=setpoint_val,

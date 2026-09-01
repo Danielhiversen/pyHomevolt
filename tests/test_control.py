@@ -662,6 +662,49 @@ def test_set_battery_mode_preserves_known_parameters() -> None:
     )
 
 
+def test_set_battery_mode_drops_invalid_preserved_parameters() -> None:
+    """A mode change must not echo unsafe device values back to the device."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client.schedule.update(
+        {
+            "mode": 5,
+            "setpoint": -100,
+            "max_charge": -200,
+            "max_discharge": -300,
+            "min_soc": -1,
+            "max_soc": 150,
+            "grid_import_limit": -400,
+            "grid_export_limit": -500,
+        }
+    )
+    client._post_console_command = AsyncMock()
+
+    asyncio.run(client.set_battery_mode("solar_charge"))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 7 -s -100")
+    assert client.schedule["max_charge"] is None
+    assert client.schedule["max_discharge"] is None
+    assert client.schedule["min_soc"] is None
+    assert client.schedule["max_soc"] is None
+    assert client.schedule["grid_import_limit"] is None
+    assert client.schedule["grid_export_limit"] is None
+
+
+def test_set_battery_mode_drops_inverted_preserved_soc_range() -> None:
+    """A mode change must not preserve a minimum SOC above the maximum SOC."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 90, "max_soc": 20})
+    client._post_console_command = AsyncMock()
+
+    asyncio.run(client.set_battery_mode("solar_charge"))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 7 -s 100")
+    assert client.schedule["min_soc"] is None
+    assert client.schedule["max_soc"] is None
+
+
 def test_set_idle_clears_preserved_parameters() -> None:
     """Idle mode sends no ignored parameters and clears their cached values."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
