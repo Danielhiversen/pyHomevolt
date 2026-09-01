@@ -144,7 +144,7 @@ class Homevolt:
 
     @property
     def schedule_mode(self) -> int | None:
-        """Get current schedule mode (0-9)."""
+        """Get current schedule mode (0-9), or None for an unknown mode."""
         return self.schedule["mode"]
 
     @property
@@ -352,7 +352,8 @@ class Homevolt:
         """Update one or more parameters on the current manual schedule entry.
 
         Local mode must already be enabled and exactly one schedule entry must exist.
-        Omitted parameters retain their current values.
+        Only parameters independently writable in the current mode are accepted.
+        Omitted writable parameters retain their current values.
 
         Args:
             setpoint: Power setpoint (W)
@@ -578,8 +579,8 @@ class Homevolt:
     ) -> None:
         """Replace the current schedule with an immediate operational mode.
 
-        Local mode must already be enabled. Known common parameters from the current
-        schedule are retained.
+        Local mode must already be enabled. Parameters from the current schedule are
+        not carried into the replacement schedule.
 
         Args:
             mode: Operational mode string such as ``idle`` or ``inverter_charge``.
@@ -657,6 +658,8 @@ class Homevolt:
 
         try:
             await self._post(url, data)
+        except HomevoltCommandOutcomeUnknownError:
+            raise
         except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
         _LOGGER.debug("Local mode set to %s", value)

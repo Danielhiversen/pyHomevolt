@@ -1122,6 +1122,18 @@ def test_local_mode_uses_observed_readback_state() -> None:
     assert client.local_mode_enabled
 
 
+def test_local_mode_preserves_unknown_mutation_outcome() -> None:
+    """Expose an ambiguous local-mode write through the specific public error."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": False, "schedule": []}
+
+    with pytest.raises(HomevoltCommandOutcomeUnknownError, match="Mutation outcome is unknown"):
+        asyncio.run(client.enable_local_mode())
+
+    assert session.attempts == 1
+
+
 def test_local_mode_rejects_readback_mismatch() -> None:
     """Do not report success when local mode remains unchanged."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
