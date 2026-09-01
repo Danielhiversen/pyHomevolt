@@ -225,6 +225,7 @@ def test_parse_schedule_discards_invalid_grid_limits(
 def test_parse_schedule_normalizes_numeric_control_values() -> None:
     """Numeric device values must satisfy the integer schedule accessor contract."""
     client = Homevolt("homevolt.local")
+    client.unique_id = "1234"
 
     client._parse_schedule_data(
         {
@@ -249,11 +250,13 @@ def test_parse_schedule_normalizes_numeric_control_values() -> None:
     assert client.schedule_max_discharge == 300
     assert client.schedule_min_soc == 20
     assert client.schedule_max_soc == 90
+    assert client.sensors["Schedule Type"].value == "grid_charge_discharge"
 
 
 def test_parse_schedule_discards_invalid_control_values() -> None:
     """Malformed device values must not escape through integer accessors."""
     client = Homevolt("homevolt.local")
+    client.unique_id = "1234"
 
     client._parse_schedule_data(
         {
@@ -278,6 +281,7 @@ def test_parse_schedule_discards_invalid_control_values() -> None:
     assert client.schedule_max_discharge is None
     assert client.schedule_min_soc is None
     assert client.schedule_max_soc is None
+    assert client.sensors["Schedule Type"].value is None
 
 
 def test_set_battery_parameters_requires_local_mode() -> None:

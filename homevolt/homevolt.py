@@ -926,7 +926,8 @@ class Homevolt:
         params: dict[str, Any] = schedule.get("params", {})
 
         # Track current battery control state
-        self.schedule["mode"] = _coerce_schedule_mode(schedule.get("type"))
+        schedule_mode = _coerce_schedule_mode(schedule.get("type"))
+        self.schedule["mode"] = schedule_mode
         self.schedule["setpoint"] = _coerce_optional_int(params.get("setpoint"))
         self.schedule["max_charge"] = _coerce_optional_int(params.get("max_charge"))
         self.schedule["max_discharge"] = _coerce_optional_int(params.get("max_discharge"))
@@ -966,7 +967,7 @@ class Homevolt:
         )
 
         self.sensors["Schedule Type"] = Sensor(
-            value=SCHEDULE_TYPE.get(schedule.get("type", -1)),
+            value=SCHEDULE_TYPE.get(schedule_mode) if schedule_mode is not None else None,
             type="schedule_type",
             device_identifier=ems_device_id,
         )
