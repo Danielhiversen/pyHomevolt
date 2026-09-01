@@ -545,33 +545,44 @@ class Homevolt:
                 f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
             )
         mode_int = valid_modes[mode]
-        setpoint_val = (
-            int(self.schedule["setpoint"]) if self.schedule["setpoint"] is not None else None
-        )
-        max_charge_val = (
-            int(self.schedule["max_charge"]) if self.schedule["max_charge"] is not None else None
-        )
-        max_discharge_val = (
-            int(self.schedule["max_discharge"])
-            if self.schedule["max_discharge"] is not None
-            else None
-        )
-        min_soc_val = (
-            int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
-        )
-        max_soc_val = (
-            int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
-        )
-        grid_import_limit_val = (
-            int(self.schedule["grid_import_limit"])
-            if self.schedule["grid_import_limit"] is not None
-            else None
-        )
-        grid_export_limit_val = (
-            int(self.schedule["grid_export_limit"])
-            if self.schedule["grid_export_limit"] is not None
-            else None
-        )
+        if mode_int == 0:
+            setpoint_val = None
+            max_charge_val = None
+            max_discharge_val = None
+            min_soc_val = None
+            max_soc_val = None
+            grid_import_limit_val = None
+            grid_export_limit_val = None
+        else:
+            setpoint_val = (
+                int(self.schedule["setpoint"]) if self.schedule["setpoint"] is not None else None
+            )
+            max_charge_val = (
+                int(self.schedule["max_charge"])
+                if self.schedule["max_charge"] is not None
+                else None
+            )
+            max_discharge_val = (
+                int(self.schedule["max_discharge"])
+                if self.schedule["max_discharge"] is not None
+                else None
+            )
+            min_soc_val = (
+                int(self.schedule["min_soc"]) if self.schedule["min_soc"] is not None else None
+            )
+            max_soc_val = (
+                int(self.schedule["max_soc"]) if self.schedule["max_soc"] is not None else None
+            )
+            grid_import_limit_val = (
+                int(self.schedule["grid_import_limit"])
+                if self.schedule["grid_import_limit"] is not None
+                else None
+            )
+            grid_export_limit_val = (
+                int(self.schedule["grid_export_limit"])
+                if self.schedule["grid_export_limit"] is not None
+                else None
+            )
         command = self._build_sched_set_command(
             mode_int=mode_int,
             setpoint=setpoint_val,

@@ -662,15 +662,41 @@ def test_set_battery_mode_preserves_known_parameters() -> None:
     )
 
 
-def test_set_idle_does_not_invent_a_setpoint() -> None:
-    """Idle mode works without an arbitrary power setpoint."""
+def test_set_idle_clears_preserved_parameters() -> None:
+    """Idle mode sends no ignored parameters and clears their cached values."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {"local_mode": True, "schedule": [{}]}
+    client.schedule.update(
+        {
+            "mode": 5,
+            "setpoint": 100,
+            "max_charge": 200,
+            "max_discharge": 300,
+            "min_soc": 20,
+            "max_soc": 90,
+            "grid_import_limit": 400,
+            "grid_export_limit": 500,
+        }
+    )
     client._post_console_command = AsyncMock()
 
     asyncio.run(client.set_battery_mode("idle"))
 
     client._post_console_command.assert_awaited_once_with("sched_set 0")
+    assert client.schedule == {
+        "mode": 0,
+        "setpoint": None,
+        "max_charge": None,
+        "max_discharge": None,
+        "min_soc": None,
+        "max_soc": None,
+        "grid_import_limit": None,
+        "grid_export_limit": None,
+        "threshold_high": None,
+        "threshold_low": None,
+        "freq_reg_droop_up": None,
+        "freq_reg_droop_down": None,
+    }
 
 
 def test_set_battery_mode_rejects_firmware_unsupported_mode() -> None:
