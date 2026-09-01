@@ -1179,16 +1179,52 @@ def test_local_mode_uses_observed_readback_state() -> None:
     assert client.local_mode_enabled
 
 
-def test_local_mode_preserves_unknown_mutation_outcome() -> None:
-    """Expose an ambiguous local-mode write through the specific public error."""
+def test_local_mode_reconciles_timeout_with_device_state() -> None:
+    """Treat an ambiguous timeout as success when local-mode read-back matches."""
     session = TimeoutSession()
     client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
     client.current_schedule = {"local_mode": False, "schedule": []}
+
+    async def read_enabled_local_mode() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 0, "params": {"offline": False}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_enabled_local_mode)
+
+    asyncio.run(client.enable_local_mode())
+
+    assert session.attempts == 1
+    client.fetch_schedule_data.assert_awaited_once()
+    assert client.local_mode_enabled
+
+
+def test_local_mode_preserves_unknown_outcome_on_timeout_mismatch() -> None:
+    """Keep the ambiguous-write signal when local-mode read-back mismatches."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {"local_mode": False, "schedule": []}
+
+    async def read_disabled_local_mode() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": False,
+                "schedule_id": "Partner Schedule",
+                "schedule": [],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_disabled_local_mode)
 
     with pytest.raises(HomevoltCommandOutcomeUnknownError, match="Mutation outcome is unknown"):
         asyncio.run(client.enable_local_mode())
 
     assert session.attempts == 1
+    client.fetch_schedule_data.assert_awaited_once()
 
 
 def test_local_mode_rejects_readback_mismatch() -> None:

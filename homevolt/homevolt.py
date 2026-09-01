@@ -667,16 +667,24 @@ class Homevolt:
             "store": "0",
         }
 
+        expected = bool(value)
+        outcome_unknown: HomevoltCommandOutcomeUnknownError | None = None
         try:
             await self._post(url, data)
-        except HomevoltCommandOutcomeUnknownError:
-            raise
+        except HomevoltCommandOutcomeUnknownError as err:
+            outcome_unknown = err
+            try:
+                await self.fetch_schedule_data()
+            except (HomevoltConnectionError, HomevoltDataError):
+                raise err
         except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
+        else:
+            await self._fetch_schedule_after_mutation()
         _LOGGER.debug("Local mode set to %s", value)
-        await self._fetch_schedule_after_mutation()
-        expected = bool(value)
         if self.local_mode_enabled is not expected:
+            if outcome_unknown is not None:
+                raise outcome_unknown
             raise HomevoltCommandVerificationError(
                 f"Device reported local mode {self.local_mode_enabled}; requested {expected}"
             )
