@@ -453,6 +453,31 @@ def test_set_battery_parameters_rejects_idle_mode() -> None:
     client._post_console_command.assert_not_awaited()
 
 
+@pytest.mark.parametrize("mode", [None, "invalid", True, 5.5, 10, "0"])
+def test_battery_parameters_writable_rejects_invalid_or_idle_modes(mode: Any) -> None:
+    """Only a known, non-idle manual entry can accept parameter writes."""
+    client = Homevolt("homevolt.local")
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": mode, "params": {"setpoint": 100}}],
+    }
+
+    assert not client.battery_parameters_writable
+
+
+def test_battery_parameters_writable_accepts_numeric_string_mode() -> None:
+    """A valid device mode uses the same coercion as parsed schedule data."""
+    client = Homevolt("homevolt.local")
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": "5", "params": {"setpoint": 100}}],
+    }
+
+    assert client.battery_parameters_writable
+
+
 def test_set_battery_parameters_rejects_unsupported_existing_parameters() -> None:
     """Do not silently drop mode-specific parameters from a manual entry."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
@@ -505,6 +530,53 @@ def test_set_battery_parameters_rejects_invalid_limits(
         asyncio.run(client.set_battery_parameters(**parameters))
 
     client._post_console_command.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("parameter", "value"),
+    [
+        ("setpoint", 200.5),
+        ("max_charge", True),
+        ("max_discharge", "invalid"),
+        ("min_soc", 20.5),
+        ("max_soc", False),
+        ("grid_import_limit", 400.5),
+        ("grid_export_limit", "invalid"),
+    ],
+)
+def test_set_battery_parameters_rejects_non_integer_caller_values(
+    parameter: str, value: Any
+) -> None:
+    """Caller values must be whole numbers and reject booleans or other types."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+    }
+    client.schedule.update({"mode": 5, "setpoint": 100, "min_soc": 20, "max_soc": 90})
+    client._post_console_command = AsyncMock()
+
+    with pytest.raises(HomevoltDataError, match=f"{parameter} is invalid"):
+        asyncio.run(client.set_battery_parameters(**{parameter: value}))
+
+    client._post_console_command.assert_not_awaited()
+
+
+def test_set_battery_parameters_accepts_integral_float() -> None:
+    """Whole-number floats remain valid and produce integer command arguments."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 5, "params": {"setpoint": 100}}],
+    }
+    client.schedule.update({"mode": 5, "setpoint": 100})
+    client._post_console_command = AsyncMock()
+
+    asyncio.run(client.set_battery_parameters(max_charge=250.0))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250")
 
 
 def test_set_battery_parameters_rejects_inverted_soc_range() -> None:

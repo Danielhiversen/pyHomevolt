@@ -55,6 +55,17 @@ def _coerce_schedule_mode(value: Any) -> int | None:
     return mode if mode in SCHEDULE_TYPE else None
 
 
+def _coerce_caller_int(name: str, value: Any) -> int:
+    """Validate and coerce a caller-provided whole-number parameter."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or (isinstance(value, float) and not value.is_integer())
+    ):
+        raise HomevoltDataError(f"{name} is invalid")
+    return int(value)
+
+
 _SUPPORTED_MANUAL_PARAMETERS = frozenset(
     {
         "setpoint",
@@ -152,7 +163,8 @@ class Homevolt:
         schedule_entry = schedule_entries[0]
         if not isinstance(schedule_entry, dict):
             return False
-        if schedule_entry.get("type") == 0:
+        mode = _coerce_schedule_mode(schedule_entry.get("type"))
+        if mode is None or mode == 0:
             return False
         params = schedule_entry.get("params")
         if not isinstance(params, dict):
@@ -400,18 +412,8 @@ class Homevolt:
         schedule_entry = schedule_entries[0]
         if not isinstance(schedule_entry, dict):
             raise HomevoltDataError("Manual Schedule entry is invalid")
-        mode_raw = schedule_entry.get("type")
-        if mode_raw is None:
-            raise HomevoltDataError("Manual Schedule mode is invalid")
-        if isinstance(mode_raw, bool) or (
-            isinstance(mode_raw, float) and not mode_raw.is_integer()
-        ):
-            raise HomevoltDataError("Manual Schedule mode is invalid")
-        try:
-            mode_int = int(mode_raw)
-        except (TypeError, ValueError, OverflowError) as err:
-            raise HomevoltDataError("Manual Schedule mode is invalid") from err
-        if mode_int not in SCHEDULE_TYPE:
+        mode_int = _coerce_schedule_mode(schedule_entry.get("type"))
+        if mode_int is None:
             raise HomevoltDataError("Manual Schedule mode is invalid")
         if mode_int == 0:
             raise HomevoltDataError("Battery parameters are ignored in idle mode")
@@ -429,41 +431,46 @@ class Homevolt:
                 f"{', '.join(unsupported_parameters)}"
             )
 
-        setpoint_raw = setpoint if setpoint is not None else self.schedule["setpoint"]
-        setpoint_val: int | None = int(setpoint_raw) if setpoint_raw is not None else None
-
-        max_charge_raw = max_charge if max_charge is not None else self.schedule["max_charge"]
-        max_charge_val: int | None = int(max_charge_raw) if max_charge_raw is not None else None
-
-        max_discharge_raw = (
-            max_discharge if max_discharge is not None else self.schedule["max_discharge"]
-        )
-        max_discharge_val: int | None = (
-            int(max_discharge_raw) if max_discharge_raw is not None else None
+        setpoint_val = (
+            _coerce_caller_int("setpoint", setpoint)
+            if setpoint is not None
+            else _coerce_optional_int(self.schedule["setpoint"])
         )
 
-        min_soc_raw = min_soc if min_soc is not None else self.schedule["min_soc"]
-        min_soc_val: int | None = int(min_soc_raw) if min_soc_raw is not None else None
+        max_charge_val = (
+            _coerce_caller_int("max_charge", max_charge)
+            if max_charge is not None
+            else _coerce_optional_int(self.schedule["max_charge"])
+        )
 
-        max_soc_raw = max_soc if max_soc is not None else self.schedule["max_soc"]
-        max_soc_val: int | None = int(max_soc_raw) if max_soc_raw is not None else None
+        max_discharge_val = (
+            _coerce_caller_int("max_discharge", max_discharge)
+            if max_discharge is not None
+            else _coerce_optional_int(self.schedule["max_discharge"])
+        )
 
-        grid_import_limit_raw = (
-            grid_import_limit
+        min_soc_val = (
+            _coerce_caller_int("min_soc", min_soc)
+            if min_soc is not None
+            else _coerce_optional_int(self.schedule["min_soc"])
+        )
+
+        max_soc_val = (
+            _coerce_caller_int("max_soc", max_soc)
+            if max_soc is not None
+            else _coerce_optional_int(self.schedule["max_soc"])
+        )
+
+        grid_import_limit_val = (
+            _coerce_caller_int("grid_import_limit", grid_import_limit)
             if grid_import_limit is not None
-            else self.schedule["grid_import_limit"]
-        )
-        grid_import_limit_val: int | None = (
-            int(grid_import_limit_raw) if grid_import_limit_raw is not None else None
+            else _coerce_optional_int(self.schedule["grid_import_limit"])
         )
 
-        grid_export_limit_raw = (
-            grid_export_limit
+        grid_export_limit_val = (
+            _coerce_caller_int("grid_export_limit", grid_export_limit)
             if grid_export_limit is not None
-            else self.schedule["grid_export_limit"]
-        )
-        grid_export_limit_val: int | None = (
-            int(grid_export_limit_raw) if grid_export_limit_raw is not None else None
+            else _coerce_optional_int(self.schedule["grid_export_limit"])
         )
 
         nonnegative_parameters = {
