@@ -2,6 +2,9 @@
 
 from .exceptions import (
     HomevoltAuthenticationError,
+    HomevoltCommandOutcomeUnknownError,
+    HomevoltCommandRejectedError,
+    HomevoltCommandVerificationError,
     HomevoltConnectionError,
     HomevoltDataError,
     HomevoltError,
@@ -13,6 +16,9 @@ __all__ = [
     "DeviceMetadata",
     "Homevolt",
     "HomevoltAuthenticationError",
+    "HomevoltCommandOutcomeUnknownError",
+    "HomevoltCommandRejectedError",
+    "HomevoltCommandVerificationError",
     "HomevoltConnectionError",
     "HomevoltDataError",
     "HomevoltError",

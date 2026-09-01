@@ -21,9 +21,13 @@ from .const import (
     RETRY_COUNT,
     RETRY_STATUS_CODES,
     SCHEDULE_TYPE,
+    WRITABLE_BATTERY_PARAMETERS,
 )
 from .exceptions import (
     HomevoltAuthenticationError,
+    HomevoltCommandOutcomeUnknownError,
+    HomevoltCommandRejectedError,
+    HomevoltCommandVerificationError,
     HomevoltConnectionError,
     HomevoltDataError,
 )
@@ -53,18 +57,6 @@ def _coerce_schedule_mode(value: Any) -> int | None:
     """Coerce a device schedule mode when it matches a known mode identifier."""
     mode = _coerce_optional_int(value)
     return mode if mode in SCHEDULE_TYPE else None
-
-
-def _coerce_nonnegative_int(value: Any) -> int | None:
-    """Coerce a device value when it is a non-negative integer."""
-    coerced = _coerce_optional_int(value)
-    return coerced if coerced is None or coerced >= 0 else None
-
-
-def _coerce_soc(value: Any) -> int | None:
-    """Coerce a device state-of-charge value when it is within range."""
-    coerced = _coerce_optional_int(value)
-    return coerced if coerced is None or 0 <= coerced <= 100 else None
 
 
 def _coerce_caller_int(name: str, value: Any) -> int:
@@ -151,9 +143,9 @@ class Homevolt:
         }
 
     @property
-    def schedule_mode(self) -> int:
-        """Get current schedule mode (0-9)."""
-        return self.schedule["mode"] if self.schedule["mode"] is not None else 0
+    def schedule_mode(self) -> int | None:
+        """Get current schedule mode (0-9), or None for an unknown mode."""
+        return self.schedule["mode"]
 
     @property
     def local_mode_enabled(self) -> bool:
@@ -165,26 +157,33 @@ class Homevolt:
     @property
     def battery_parameters_writable(self) -> bool:
         """Check whether the current manual entry supports partial parameter writes."""
+        return bool(self.writable_battery_parameters)
+
+    @property
+    def writable_battery_parameters(self) -> frozenset[str]:
+        """Return parameters independently writable for the current schedule."""
         if not self.local_mode_enabled or self.current_schedule is None:
-            return False
+            return frozenset()
         if self.current_schedule.get("schedule_id") != "Manual Schedule":
-            return False
+            return frozenset()
         schedule_entries = self.current_schedule.get("schedule")
         if not isinstance(schedule_entries, list) or len(schedule_entries) != 1:
-            return False
+            return frozenset()
         schedule_entry = schedule_entries[0]
         if not isinstance(schedule_entry, dict):
-            return False
+            return frozenset()
         mode = _coerce_schedule_mode(schedule_entry.get("type"))
-        if mode is None or mode == 0:
-            return False
+        if mode is None:
+            return frozenset()
         params = schedule_entry.get("params")
         if not isinstance(params, dict):
-            return False
-        return not any(
+            return frozenset()
+        if any(
             value is not None and key not in _SUPPORTED_MANUAL_PARAMETERS
             for key, value in params.items()
-        )
+        ):
+            return frozenset()
+        return WRITABLE_BATTERY_PARAMETERS.get(mode, frozenset())
 
     @property
     def schedule_setpoint(self) -> int | None:
@@ -298,45 +297,24 @@ class Homevolt:
                     await asyncio.sleep(delay)
         raise HomevoltConnectionError(f"Failed to connect to device: {last_err}") from last_err
 
-    async def _post(self, url: str, data: dict[str, str]) -> None:
-        """POST data to a URL with retries.
-
-        Retries on timeouts, client errors, and transient HTTP status codes
-        (502/503/504) with exponential backoff. Never retries 401.
-        """
+    async def _post(self, url: str, data: dict[str, str]) -> str:
+        """POST one mutation without risking an ambiguous duplicate."""
         await self._ensure_session()
         assert self._websession is not None
-        last_err: Exception | None = None
-        for attempt in range(RETRY_COUNT + 1):
-            try:
-                async with self._websession.post(
-                    url, data=data, auth=self._auth, timeout=self._timeout
-                ) as response:
-                    if response.status == 401:
-                        raise HomevoltAuthenticationError("Authentication failed")
-                    response.raise_for_status()
-                    return
-            except HomevoltAuthenticationError:
-                raise
-            except (TimeoutError, aiohttp.ClientError) as err:
-                if (
-                    isinstance(err, aiohttp.ClientResponseError)
-                    and err.status not in RETRY_STATUS_CODES
-                ):
-                    raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
-                last_err = err
-                if attempt < RETRY_COUNT:
-                    delay = RETRY_BACKOFF_FACTOR * (2**attempt)
-                    _LOGGER.debug(
-                        "Request to %s failed (%s), retrying in %.1fs (attempt %d/%d)",
-                        url,
-                        err,
-                        delay,
-                        attempt + 1,
-                        RETRY_COUNT,
-                    )
-                    await asyncio.sleep(delay)
-        raise HomevoltConnectionError(f"Failed to connect to device: {last_err}") from last_err
+        try:
+            async with self._websession.post(
+                url, data=data, auth=self._auth, timeout=self._timeout
+            ) as response:
+                if response.status == 401:
+                    raise HomevoltAuthenticationError("Authentication failed")
+                response.raise_for_status()
+                return await response.text()
+        except HomevoltAuthenticationError:
+            raise
+        except (TimeoutError, aiohttp.ClientConnectionError) as err:
+            raise HomevoltCommandOutcomeUnknownError(f"Mutation outcome is unknown: {err}") from err
+        except aiohttp.ClientError as err:
+            raise HomevoltConnectionError(f"Failed to connect to device: {err}") from err
 
     async def fetch_ems_data(self) -> None:
         """Fetch EMS data from the device."""
@@ -352,6 +330,15 @@ class Homevolt:
         _LOGGER.debug("Schedule Data: %s", schedule_data)
         self._parse_schedule_data(schedule_data)
 
+    async def _fetch_schedule_after_mutation(self) -> None:
+        """Refresh state after a mutation whose acceptance may be ambiguous."""
+        try:
+            await self.fetch_schedule_data()
+        except (HomevoltConnectionError, HomevoltDataError) as err:
+            raise HomevoltCommandOutcomeUnknownError(
+                f"Command was sent but schedule read-back failed: {err}"
+            ) from err
+
     async def set_battery_parameters(
         self,
         setpoint: int | float | None = None,
@@ -365,7 +352,8 @@ class Homevolt:
         """Update one or more parameters on the current manual schedule entry.
 
         Local mode must already be enabled and exactly one schedule entry must exist.
-        Omitted parameters retain their current values.
+        Only parameters independently writable in the current mode are accepted.
+        Omitted writable parameters retain their current values.
 
         Args:
             setpoint: Power setpoint (W)
@@ -429,6 +417,27 @@ class Homevolt:
             raise HomevoltDataError("Manual Schedule mode is invalid")
         if mode_int == 0:
             raise HomevoltDataError("Battery parameters are ignored in idle mode")
+        requested_parameters = {
+            name
+            for name, value in {
+                "setpoint": setpoint,
+                "max_charge": max_charge,
+                "max_discharge": max_discharge,
+                "min_soc": min_soc,
+                "max_soc": max_soc,
+                "grid_import_limit": grid_import_limit,
+                "grid_export_limit": grid_export_limit,
+            }.items()
+            if value is not None
+        }
+        invalid_for_mode = sorted(
+            requested_parameters - WRITABLE_BATTERY_PARAMETERS.get(mode_int, frozenset())
+        )
+        if invalid_for_mode:
+            raise HomevoltDataError(
+                f"{', '.join(invalid_for_mode)} cannot be written independently in mode {mode_int}"
+            )
+        writable_parameters = WRITABLE_BATTERY_PARAMETERS.get(mode_int, frozenset())
         params = schedule_entry.get("params")
         if not isinstance(params, dict):
             raise HomevoltDataError("Manual Schedule parameters are missing")
@@ -444,48 +453,77 @@ class Homevolt:
             )
 
         setpoint_val = (
-            _coerce_caller_int("setpoint", setpoint)
-            if setpoint is not None
-            else _coerce_optional_int(self.schedule["setpoint"])
+            (
+                _coerce_caller_int("setpoint", setpoint)
+                if setpoint is not None
+                else _coerce_optional_int(self.schedule["setpoint"])
+            )
+            if "setpoint" in writable_parameters
+            else None
         )
 
         max_charge_val = (
-            _coerce_caller_int("max_charge", max_charge)
-            if max_charge is not None
-            else _coerce_optional_int(self.schedule["max_charge"])
+            (
+                _coerce_caller_int("max_charge", max_charge)
+                if max_charge is not None
+                else _coerce_optional_int(self.schedule["max_charge"])
+            )
+            if "max_charge" in writable_parameters
+            else None
         )
 
         max_discharge_val = (
-            _coerce_caller_int("max_discharge", max_discharge)
-            if max_discharge is not None
-            else _coerce_optional_int(self.schedule["max_discharge"])
+            (
+                _coerce_caller_int("max_discharge", max_discharge)
+                if max_discharge is not None
+                else _coerce_optional_int(self.schedule["max_discharge"])
+            )
+            if "max_discharge" in writable_parameters
+            else None
         )
 
         min_soc_val = (
-            _coerce_caller_int("min_soc", min_soc)
-            if min_soc is not None
-            else _coerce_optional_int(self.schedule["min_soc"])
+            (
+                _coerce_caller_int("min_soc", min_soc)
+                if min_soc is not None
+                else _coerce_optional_int(self.schedule["min_soc"])
+            )
+            if "min_soc" in writable_parameters
+            else None
         )
 
         max_soc_val = (
-            _coerce_caller_int("max_soc", max_soc)
-            if max_soc is not None
-            else _coerce_optional_int(self.schedule["max_soc"])
+            (
+                _coerce_caller_int("max_soc", max_soc)
+                if max_soc is not None
+                else _coerce_optional_int(self.schedule["max_soc"])
+            )
+            if "max_soc" in writable_parameters
+            else None
         )
 
         grid_import_limit_val = (
-            _coerce_caller_int("grid_import_limit", grid_import_limit)
-            if grid_import_limit is not None
-            else _coerce_optional_int(self.schedule["grid_import_limit"])
+            (
+                _coerce_caller_int("grid_import_limit", grid_import_limit)
+                if grid_import_limit is not None
+                else _coerce_optional_int(self.schedule["grid_import_limit"])
+            )
+            if "grid_import_limit" in writable_parameters
+            else None
         )
 
         grid_export_limit_val = (
-            _coerce_caller_int("grid_export_limit", grid_export_limit)
-            if grid_export_limit is not None
-            else _coerce_optional_int(self.schedule["grid_export_limit"])
+            (
+                _coerce_caller_int("grid_export_limit", grid_export_limit)
+                if grid_export_limit is not None
+                else _coerce_optional_int(self.schedule["grid_export_limit"])
+            )
+            if "grid_export_limit" in writable_parameters
+            else None
         )
 
         nonnegative_parameters = {
+            "setpoint": setpoint_val,
             "max_charge": max_charge_val,
             "max_discharge": max_discharge_val,
             "grid_import_limit": grid_import_limit_val,
@@ -516,16 +554,35 @@ class Homevolt:
             grid_export_limit=grid_export_limit_val,
         )
         _LOGGER.debug("Sending battery control command: %s", command)
-        await self._post_console_command(command)
-
-        self.schedule["mode"] = mode_int
-        self.schedule["setpoint"] = setpoint_val
-        self.schedule["max_charge"] = max_charge_val
-        self.schedule["max_discharge"] = max_discharge_val
-        self.schedule["min_soc"] = min_soc_val
-        self.schedule["max_soc"] = max_soc_val
-        self.schedule["grid_import_limit"] = grid_import_limit_val
-        self.schedule["grid_export_limit"] = grid_export_limit_val
+        outcome_unknown: HomevoltCommandOutcomeUnknownError | None = None
+        try:
+            await self._post_console_command(command)
+        except HomevoltCommandOutcomeUnknownError as err:
+            outcome_unknown = err
+            try:
+                await self.fetch_schedule_data()
+            except (HomevoltConnectionError, HomevoltDataError):
+                raise err
+        else:
+            await self._fetch_schedule_after_mutation()
+        expected_parameters = {
+            "setpoint": setpoint_val,
+            "max_charge": max_charge_val,
+            "max_discharge": max_discharge_val,
+            "min_soc": min_soc_val,
+            "max_soc": max_soc_val,
+            "grid_import_limit": grid_import_limit_val,
+            "grid_export_limit": grid_export_limit_val,
+        }
+        for name in requested_parameters:
+            observed = self.schedule[name]
+            expected = expected_parameters[name]
+            if observed != expected:
+                if outcome_unknown is not None:
+                    raise outcome_unknown
+                raise HomevoltCommandVerificationError(
+                    f"Device reported {name} {observed}; requested {expected}"
+                )
 
     async def set_battery_mode(
         self,
@@ -533,8 +590,8 @@ class Homevolt:
     ) -> None:
         """Replace the current schedule with an immediate operational mode.
 
-        Local mode must already be enabled. Known common parameters from the current
-        schedule are retained.
+        Local mode must already be enabled. Parameters from the current schedule are
+        not carried into the replacement schedule.
 
         Args:
             mode: Operational mode string such as ``idle`` or ``inverter_charge``.
@@ -557,54 +614,42 @@ class Homevolt:
                 f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
             )
         mode_int = valid_modes[mode]
-        if mode_int == 0:
-            setpoint_val = None
-            max_charge_val = None
-            max_discharge_val = None
-            min_soc_val = None
-            max_soc_val = None
-            grid_import_limit_val = None
-            grid_export_limit_val = None
-        else:
-            setpoint_val = _coerce_optional_int(self.schedule["setpoint"])
-            max_charge_val = _coerce_nonnegative_int(self.schedule["max_charge"])
-            max_discharge_val = _coerce_nonnegative_int(self.schedule["max_discharge"])
-            min_soc_val = _coerce_soc(self.schedule["min_soc"])
-            max_soc_val = _coerce_soc(self.schedule["max_soc"])
-            if min_soc_val is not None and max_soc_val is not None and min_soc_val > max_soc_val:
-                min_soc_val = None
-                max_soc_val = None
-            grid_import_limit_val = _coerce_nonnegative_int(self.schedule["grid_import_limit"])
-            grid_export_limit_val = _coerce_nonnegative_int(self.schedule["grid_export_limit"])
         command = self._build_sched_set_command(
             mode_int=mode_int,
-            setpoint=setpoint_val,
-            max_charge=max_charge_val,
-            max_discharge=max_discharge_val,
-            min_soc=min_soc_val,
-            max_soc=max_soc_val,
-            grid_import_limit=grid_import_limit_val,
-            grid_export_limit=grid_export_limit_val,
+            setpoint=None,
+            max_charge=None,
+            max_discharge=None,
+            min_soc=None,
+            max_soc=None,
+            grid_import_limit=None,
+            grid_export_limit=None,
         )
         _LOGGER.debug("Sending battery control command: %s", command)
-        await self._post_console_command(command)
-
-        self.schedule["mode"] = mode_int
-        self.schedule["setpoint"] = setpoint_val
-        self.schedule["max_charge"] = max_charge_val
-        self.schedule["max_discharge"] = max_discharge_val
-        self.schedule["min_soc"] = min_soc_val
-        self.schedule["max_soc"] = max_soc_val
-        self.schedule["grid_import_limit"] = grid_import_limit_val
-        self.schedule["grid_export_limit"] = grid_export_limit_val
+        try:
+            await self._post_console_command(command)
+        except HomevoltCommandOutcomeUnknownError as err:
+            try:
+                await self.fetch_schedule_data()
+            except (HomevoltConnectionError, HomevoltDataError):
+                raise err
+            if self.schedule["mode"] == mode_int:
+                return
+            raise err
+        await self._fetch_schedule_after_mutation()
+        if self.schedule["mode"] != mode_int:
+            raise HomevoltCommandVerificationError(
+                f"Device reported mode {self.schedule['mode']} after requesting {mode_int}"
+            )
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""
-        await self._set_local_mode(1)
+        async with self._control_lock:
+            await self._set_local_mode(1)
 
     async def disable_local_mode(self) -> None:
         """Disable local mode for battery control."""
-        await self._set_local_mode(0)
+        async with self._control_lock:
+            await self._set_local_mode(0)
 
     async def _set_local_mode(self, value: int) -> None:
         """Set local mode parameter.
@@ -622,14 +667,27 @@ class Homevolt:
             "store": "0",
         }
 
+        expected = bool(value)
+        outcome_unknown: HomevoltCommandOutcomeUnknownError | None = None
         try:
             await self._post(url, data)
+        except HomevoltCommandOutcomeUnknownError as err:
+            outcome_unknown = err
+            try:
+                await self.fetch_schedule_data()
+            except (HomevoltConnectionError, HomevoltDataError):
+                raise err
         except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to set local mode: {err}") from err
+        else:
+            await self._fetch_schedule_after_mutation()
         _LOGGER.debug("Local mode set to %s", value)
-
-        if self.current_schedule is not None:
-            self.current_schedule["local_mode"] = bool(value)
+        if self.local_mode_enabled is not expected:
+            if outcome_unknown is not None:
+                raise outcome_unknown
+            raise HomevoltCommandVerificationError(
+                f"Device reported local mode {self.local_mode_enabled}; requested {expected}"
+            )
 
     def _build_sched_set_command(
         self,
@@ -660,16 +718,25 @@ class Homevolt:
             cmd_parts.append(f"-x {grid_export_limit}")
         return " ".join(cmd_parts)
 
-    async def _post_console_command(self, command: str) -> None:
+    async def _post_console_command(self, command: str) -> str:
         """Send a console command using the form payload expected by the device."""
         url = f"{self.base_url}{ENDPOINT_CONSOLE}"
         data = {"cmd": command}
 
         try:
-            await self._post(url, data)
+            response = await self._post(url, data)
+        except HomevoltCommandOutcomeUnknownError:
+            raise
         except HomevoltConnectionError as err:
             raise HomevoltConnectionError(f"Failed to send console command: {err}") from err
+        normalized_response = response.strip().casefold()
+        if normalized_response.startswith(("error", "failed")) or any(
+            marker in normalized_response
+            for marker in ("invalid arguments", "unknown command", "not recognized")
+        ):
+            raise HomevoltCommandRejectedError(response.strip())
         _LOGGER.debug("Console command sent successfully")
+        return response
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""

@@ -13,8 +13,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy
-        entry: mypy
+        entry: mypy homevolt
         language: system
+        pass_filenames: false
         types: [python]
-        files: ^(homevolt|test)/.+\.py$
-

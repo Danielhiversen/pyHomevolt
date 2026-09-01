@@ -23,3 +23,21 @@ class HomevoltDataError(HomevoltError):
     """Raised when there's an error parsing or processing data."""
 
     pass
+
+
+class HomevoltCommandRejectedError(HomevoltDataError):
+    """Raised when the device console rejects a command."""
+
+    pass
+
+
+class HomevoltCommandVerificationError(HomevoltDataError):
+    """Raised when device state does not match an accepted command."""
+
+    pass
+
+
+class HomevoltCommandOutcomeUnknownError(HomevoltConnectionError):
+    """Raised when a mutation may have succeeded but cannot be verified."""
+
+    pass
