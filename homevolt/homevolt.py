@@ -460,7 +460,7 @@ class Homevolt:
             grid_import_limit=grid_import_limit_val,
             grid_export_limit=grid_export_limit_val,
         )
-        _LOGGER.debug("Sending battery mode command: %s", command)
+        _LOGGER.debug("Sending battery control command: %s", command)
         await self._post_console_command(command)
 
         self.schedule["mode"] = mode_int
@@ -498,7 +498,7 @@ class Homevolt:
         # Create reverse mapping for validation
         valid_modes = {v: k for k, v in CONTROLLABLE_SCHEDULE_TYPE.items()}
         if mode not in valid_modes:
-            raise ValueError(
+            raise HomevoltDataError(
                 f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
             )
         mode_int = valid_modes[mode]
@@ -539,7 +539,7 @@ class Homevolt:
             grid_import_limit=grid_import_limit_val,
             grid_export_limit=grid_export_limit_val,
         )
-        _LOGGER.debug("Sending battery mode command: %s", command)
+        _LOGGER.debug("Sending battery control command: %s", command)
         await self._post_console_command(command)
 
         self.schedule["mode"] = mode_int
@@ -621,8 +621,8 @@ class Homevolt:
         try:
             await self._post(url, data)
         except HomevoltConnectionError as err:
-            raise HomevoltConnectionError(f"Failed to set battery mode: {err}") from err
-        _LOGGER.debug("Battery mode set successfully")
+            raise HomevoltConnectionError(f"Failed to send console command: {err}") from err
+        _LOGGER.debug("Console command sent successfully")
 
     def _parse_ems_data(self, ems_data: dict[str, Any]) -> None:
         """Parse EMS JSON response."""

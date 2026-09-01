@@ -145,13 +145,11 @@ The following mode strings are available for battery control:
 - `idle`: Battery standby (mode 0)
 - `inverter_charge`: Charge via the inverter from grid/solar (mode 1)
 - `inverter_discharge`: Discharge via the inverter to home/grid (mode 2)
-- `grid_charge`: Charge from the grid with a power setpoint (mode 3)
-- `grid_discharge`: Discharge to the grid with a power setpoint (mode 4)
-- `grid_charge_discharge`: Bidirectional grid control (mode 5)
 - `frequency_reserve`: Frequency regulation service mode (mode 6)
 - `solar_charge`: Charge from solar production only (mode 7)
-- `solar_charge_discharge`: Solar-based grid management (mode 8)
-- `full_solar_export`: Export all solar production (mode 9)
+
+Other firmware schedule types are intentionally rejected because current firmware
+does not create a matching manual schedule for them.
 
 Battery writes require local mode to be enabled first. `set_battery_mode()` uses the
 device's `sched_set` command, so it replaces the complete current schedule with one
