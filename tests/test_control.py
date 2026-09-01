@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import types
 from collections.abc import Mapping
 from typing import Any
 from unittest.mock import AsyncMock
@@ -35,7 +36,7 @@ class FakeResponse:
         """Raise for non-success responses."""
         if self.status >= 400:
             raise aiohttp.ClientResponseError(
-                request_info=None,  # type: ignore[arg-type]
+                request_info=types.SimpleNamespace(real_url="http://homevolt.local"),  # type: ignore[arg-type]
                 history=(),
                 status=self.status,
             )
@@ -194,7 +195,7 @@ def test_parse_schedule_normalizes_numeric_grid_limits() -> None:
 
 @pytest.mark.parametrize(
     ("import_limit", "export_limit"),
-    [("unknown", []), (True, False)],
+    [("unknown", []), (True, False), (500.5, 600.5)],
 )
 def test_parse_schedule_discards_invalid_grid_limits(
     import_limit: Any,
@@ -219,6 +220,64 @@ def test_parse_schedule_discards_invalid_grid_limits(
 
     assert client.schedule_grid_import_limit is None
     assert client.schedule_grid_export_limit is None
+
+
+def test_parse_schedule_normalizes_numeric_control_values() -> None:
+    """Numeric device values must satisfy the integer schedule accessor contract."""
+    client = Homevolt("homevolt.local")
+
+    client._parse_schedule_data(
+        {
+            "schedule": [
+                {
+                    "type": "5",
+                    "min": "20",
+                    "max": 90.0,
+                    "params": {
+                        "setpoint": "100",
+                        "max_charge": 200.0,
+                        "max_discharge": "300",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert client.schedule_mode == 5
+    assert client.schedule_setpoint == 100
+    assert client.schedule_max_charge == 200
+    assert client.schedule_max_discharge == 300
+    assert client.schedule_min_soc == 20
+    assert client.schedule_max_soc == 90
+
+
+def test_parse_schedule_discards_invalid_control_values() -> None:
+    """Malformed device values must not escape through integer accessors."""
+    client = Homevolt("homevolt.local")
+
+    client._parse_schedule_data(
+        {
+            "schedule": [
+                {
+                    "type": True,
+                    "min": [],
+                    "max": {},
+                    "params": {
+                        "setpoint": False,
+                        "max_charge": 200.5,
+                        "max_discharge": "unknown",
+                    },
+                }
+            ]
+        }
+    )
+
+    assert client.schedule_mode == 0
+    assert client.schedule_setpoint is None
+    assert client.schedule_max_charge is None
+    assert client.schedule_max_discharge is None
+    assert client.schedule_min_soc is None
+    assert client.schedule_max_soc is None
 
 
 def test_set_battery_parameters_requires_local_mode() -> None:
@@ -591,6 +650,15 @@ def test_console_command_failure_is_not_described_as_mode_change() -> None:
         HomevoltConnectionError,
         match="^Failed to send console command: offline$",
     ):
+        asyncio.run(client._post_console_command("sched_set 1 -c 250"))
+
+
+def test_http_error_is_wrapped_with_response_context() -> None:
+    """HTTP response failures must retain status and URL in the library error."""
+    session = FakeSession(FakeResponse(status=400))
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+
+    with pytest.raises(HomevoltConnectionError, match=r"400.*homevolt\.local"):
         asyncio.run(client._post_console_command("sched_set 1 -c 250"))
 
 

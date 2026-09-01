@@ -41,10 +41,18 @@ def _coerce_optional_int(value: Any) -> int | None:
     """Coerce a device value to int, returning None for missing or invalid data."""
     if value is None or isinstance(value, bool):
         return None
+    if isinstance(value, float) and not value.is_integer():
+        return None
     try:
         return int(value)
     except (TypeError, ValueError, OverflowError):
         return None
+
+
+def _coerce_schedule_mode(value: Any) -> int | None:
+    """Coerce a device schedule mode when it matches a known mode identifier."""
+    mode = _coerce_optional_int(value)
+    return mode if mode in SCHEDULE_TYPE else None
 
 
 _SUPPORTED_MANUAL_PARAMETERS = frozenset(
@@ -907,19 +915,19 @@ class Homevolt:
         params: dict[str, Any] = schedule.get("params", {})
 
         # Track current battery control state
-        self.schedule["mode"] = schedule.get("type")
-        self.schedule["setpoint"] = params.get("setpoint")
-        self.schedule["max_charge"] = params.get("max_charge")
-        self.schedule["max_discharge"] = params.get("max_discharge")
+        self.schedule["mode"] = _coerce_schedule_mode(schedule.get("type"))
+        self.schedule["setpoint"] = _coerce_optional_int(params.get("setpoint"))
+        self.schedule["max_charge"] = _coerce_optional_int(params.get("max_charge"))
+        self.schedule["max_discharge"] = _coerce_optional_int(params.get("max_discharge"))
         min_soc = schedule.get("min")
         if min_soc is None:
             min_soc = params.get("min_soc", params.get("min"))
-        self.schedule["min_soc"] = min_soc
+        self.schedule["min_soc"] = _coerce_optional_int(min_soc)
 
         max_soc = schedule.get("max")
         if max_soc is None:
             max_soc = params.get("max_soc", params.get("max"))
-        self.schedule["max_soc"] = max_soc
+        self.schedule["max_soc"] = _coerce_optional_int(max_soc)
 
         grid_import_limit = params.get("import_limit")
         if grid_import_limit is None:
