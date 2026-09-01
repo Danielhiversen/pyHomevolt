@@ -122,34 +122,16 @@ async def main():
             # Enable local mode to prevent remote schedule overrides
             await homevolt_connection.enable_local_mode()
 
-            # Charge battery immediately (up to 3000W, stop at 90% SOC)
-            await homevolt_connection.charge_battery(max_power=3000, max_soc=90)
+            # Replace the current schedule with immediate inverter-charge control.
+            await homevolt_connection.set_battery_mode("inverter_charge")
 
-            # Or use the full control method
-            await homevolt_connection.set_battery_mode(
-                mode=1,  # Inverter Charge
+            # Refresh once so the new Manual Schedule entry can be updated safely.
+            await homevolt_connection.fetch_schedule_data()
+            await homevolt_connection.set_battery_parameters(
                 max_charge=3000,
+                min_soc=20,
                 max_soc=90,
             )
-
-            # Schedule night charging (11 PM - 7 AM)
-            from datetime import datetime, timedelta
-            tonight = datetime.now().replace(hour=23, minute=0, second=0)
-            tomorrow = (tonight + timedelta(days=1)).replace(hour=7, minute=0, second=0)
-
-            await homevolt_connection.add_schedule(
-                mode=1,  # Inverter Charge
-                from_time=tonight.isoformat(),
-                to_time=tomorrow.isoformat(),
-                max_charge=3000,
-                max_soc=80,
-            )
-
-            # Set battery to idle
-            await homevolt_connection.set_battery_idle()
-
-            # Discharge during peak hours
-            await homevolt_connection.discharge_battery(max_power=2500, min_soc=30)
 
 
 if __name__ == "__main__":
@@ -158,18 +140,21 @@ if __name__ == "__main__":
 
 ## Battery Control Modes
 
-The following modes are available for battery control:
+The following mode strings are available for battery control:
 
-- `0`: Idle - Battery standby (no charge/discharge)
-- `1`: Inverter Charge - Charge battery via inverter from grid/solar
-- `2`: Inverter Discharge - Discharge battery via inverter to home/grid
-- `3`: Grid Charge - Charge from grid with power setpoint
-- `4`: Grid Discharge - Discharge to grid with power setpoint
-- `5`: Grid Charge/Discharge - Bidirectional grid control
-- `6`: Frequency Reserve - Frequency regulation service mode
-- `7`: Solar Charge - Charge from solar production only
-- `8`: Solar Charge/Discharge - Solar-based grid management
-- `9`: Full Solar Export - Export all solar production
+- `idle`: Battery standby (mode 0)
+- `inverter_charge`: Charge via the inverter from grid/solar (mode 1)
+- `inverter_discharge`: Discharge via the inverter to home/grid (mode 2)
+- `frequency_reserve`: Frequency regulation service mode (mode 6)
+- `solar_charge`: Charge from solar production only (mode 7)
+
+Other firmware schedule types are intentionally rejected because current firmware
+does not create a matching manual schedule for them.
+
+Battery writes require local mode to be enabled first. `set_battery_mode()` uses the
+device's `sched_set` command, so it replaces the complete current schedule with one
+immediate `Manual Schedule` entry. `set_battery_parameters()` only accepts that
+single manual entry and refuses writes that would discard unsupported parameters.
 
 ## API Reference
 
@@ -191,6 +176,7 @@ Initialize a Homevolt connection.
 - `sensors` (dict[str, Sensor]): Dictionary of sensor readings
 - `device_metadata` (dict[str, DeviceMetadata]): Dictionary of device metadata
 - `current_schedule` (dict | None): Current schedule information
+- `battery_parameters_writable` (bool): Whether the current manual entry supports partial writes
 
 #### Methods
 
@@ -201,28 +187,13 @@ Initialize a Homevolt connection.
 
 #### Battery Control Methods
 
-**Immediate Control:**
-
-- `async set_battery_mode(mode, **kwargs)`: Set immediate battery control mode
-- `async charge_battery(**kwargs)`: Charge battery using inverter
-- `async discharge_battery(**kwargs)`: Discharge battery using inverter
-- `async set_battery_idle(**kwargs)`: Set battery to idle mode
-- `async charge_from_grid(**kwargs)`: Charge from grid with power setpoint
-- `async discharge_to_grid(**kwargs)`: Discharge to grid with power setpoint
-- `async charge_from_solar(**kwargs)`: Charge from solar only
-
-**Scheduled Control:**
-
-- `async add_schedule(mode, **kwargs)`: Add a scheduled battery control entry
-- `async delete_schedule(schedule_id)`: Delete a schedule by ID
-- `async clear_all_schedules()`: Clear all schedules
+- `async set_battery_mode(mode)`: Replace the schedule with an immediate control mode
+- `async set_battery_parameters(**kwargs)`: Update supported values on one manual entry
 
 **Configuration:**
 
 - `async enable_local_mode()`: Enable local mode (prevents remote overrides)
 - `async disable_local_mode()`: Disable local mode (allows remote overrides)
-- `async set_parameter(key, value)`: Set a device parameter
-- `async get_parameter(key)`: Get a device parameter value
 
 ### Data Models
 
