@@ -171,6 +171,56 @@ def test_parse_schedule_populates_control_state_without_ems_data() -> None:
     assert client.schedule["grid_import_limit"] == 400
 
 
+def test_parse_schedule_normalizes_numeric_grid_limits() -> None:
+    """Public grid-limit accessors must return integers for numeric JSON values."""
+    client = Homevolt("homevolt.local")
+
+    client._parse_schedule_data(
+        {
+            "schedule": [
+                {
+                    "type": 5,
+                    "params": {"import_limit": "400", "export_limit": 500.0},
+                }
+            ]
+        }
+    )
+
+    assert client.schedule_grid_import_limit == 400
+    assert client.schedule_grid_export_limit == 500
+    assert isinstance(client.schedule_grid_import_limit, int)
+    assert isinstance(client.schedule_grid_export_limit, int)
+
+
+@pytest.mark.parametrize(
+    ("import_limit", "export_limit"),
+    [("unknown", []), (True, False)],
+)
+def test_parse_schedule_discards_invalid_grid_limits(
+    import_limit: Any,
+    export_limit: Any,
+) -> None:
+    """Unexpected grid-limit formats must not escape through typed accessors."""
+    client = Homevolt("homevolt.local")
+
+    client._parse_schedule_data(
+        {
+            "schedule": [
+                {
+                    "type": 5,
+                    "params": {
+                        "import_limit": import_limit,
+                        "export_limit": export_limit,
+                    },
+                }
+            ]
+        }
+    )
+
+    assert client.schedule_grid_import_limit is None
+    assert client.schedule_grid_export_limit is None
+
+
 def test_set_battery_parameters_requires_local_mode() -> None:
     """A parameter write must not silently take persistent local control."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
@@ -276,6 +326,35 @@ def test_set_battery_parameters_uses_manual_entry_mode_when_cache_is_empty() -> 
 
     client._post_console_command.assert_awaited_once_with("sched_set 5 -s 100 -c 250")
     assert client.schedule["mode"] == 5
+
+
+@pytest.mark.parametrize(
+    "schedule_entry",
+    [
+        {"params": {"setpoint": 100}},
+        {"type": None, "params": {"setpoint": 100}},
+        {"type": "invalid", "params": {"setpoint": 100}},
+        {"type": True, "params": {"setpoint": 100}},
+        {"type": 5.5, "params": {"setpoint": 100}},
+        {"type": 10, "params": {"setpoint": 100}},
+    ],
+)
+def test_set_battery_parameters_rejects_invalid_manual_entry_mode(
+    schedule_entry: dict[str, Any],
+) -> None:
+    """Malformed device mode data must raise a controlled library error."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [schedule_entry],
+    }
+    client._post_console_command = AsyncMock()
+
+    with pytest.raises(HomevoltDataError, match="mode"):
+        asyncio.run(client.set_battery_parameters(max_charge=250))
+
+    client._post_console_command.assert_not_awaited()
 
 
 def test_set_battery_parameters_requires_manual_schedule() -> None:

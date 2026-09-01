@@ -37,6 +37,16 @@ def _sum_phase_power(phases: list[dict[str, Any]]) -> int | float:
     return sum(phase.get("power") or 0 for phase in phases)
 
 
+def _coerce_optional_int(value: Any) -> int | None:
+    """Coerce a device value to int, returning None for missing or invalid data."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 _SUPPORTED_MANUAL_PARAMETERS = frozenset(
     {
         "setpoint",
@@ -382,7 +392,20 @@ class Homevolt:
         schedule_entry = schedule_entries[0]
         if not isinstance(schedule_entry, dict):
             raise HomevoltDataError("Manual Schedule entry is invalid")
-        if schedule_entry.get("type") == 0:
+        mode_raw = schedule_entry.get("type")
+        if mode_raw is None:
+            raise HomevoltDataError("Manual Schedule mode is invalid")
+        if isinstance(mode_raw, bool) or (
+            isinstance(mode_raw, float) and not mode_raw.is_integer()
+        ):
+            raise HomevoltDataError("Manual Schedule mode is invalid")
+        try:
+            mode_int = int(mode_raw)
+        except (TypeError, ValueError, OverflowError) as err:
+            raise HomevoltDataError("Manual Schedule mode is invalid") from err
+        if mode_int not in SCHEDULE_TYPE:
+            raise HomevoltDataError("Manual Schedule mode is invalid")
+        if mode_int == 0:
             raise HomevoltDataError("Battery parameters are ignored in idle mode")
         params = schedule_entry.get("params")
         if not isinstance(params, dict):
@@ -454,8 +477,6 @@ class Homevolt:
             )
         if min_soc_val is not None and max_soc_val is not None and min_soc_val > max_soc_val:
             raise HomevoltDataError("Minimum state of charge cannot exceed maximum state of charge")
-
-        mode_int = int(schedule_entry["type"])
 
         command = self._build_sched_set_command(
             mode_int=mode_int,
@@ -903,12 +924,12 @@ class Homevolt:
         grid_import_limit = params.get("import_limit")
         if grid_import_limit is None:
             grid_import_limit = params.get("grid_import_limit")
-        self.schedule["grid_import_limit"] = grid_import_limit
+        self.schedule["grid_import_limit"] = _coerce_optional_int(grid_import_limit)
 
         grid_export_limit = params.get("export_limit")
         if grid_export_limit is None:
             grid_export_limit = params.get("grid_export_limit")
-        self.schedule["grid_export_limit"] = grid_export_limit
+        self.schedule["grid_export_limit"] = _coerce_optional_int(grid_export_limit)
         self.schedule["threshold_high"] = params.get("threshold_high")
         self.schedule["threshold_low"] = params.get("threshold_low")
         self.schedule["freq_reg_droop_up"] = params.get("freq_reg_droop_up")
