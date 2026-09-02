@@ -590,8 +590,8 @@ class Homevolt:
     ) -> None:
         """Replace the current schedule with an immediate operational mode.
 
-        Local mode must already be enabled. Parameters from the current schedule are
-        not carried into the replacement schedule.
+        Local mode must already be enabled. Parameters independently writable in the
+        target mode are carried into the replacement schedule.
 
         Args:
             mode: Operational mode string such as ``idle`` or ``inverter_charge``.
@@ -614,32 +614,45 @@ class Homevolt:
                 f"Invalid mode '{mode}'. Must be one of: {', '.join(valid_modes.keys())}"
             )
         mode_int = valid_modes[mode]
+        writable_parameters = WRITABLE_BATTERY_PARAMETERS[mode_int]
+        expected_parameters = {
+            name: _coerce_optional_int(self.schedule[name]) for name in writable_parameters
+        }
         command = self._build_sched_set_command(
             mode_int=mode_int,
-            setpoint=None,
-            max_charge=None,
-            max_discharge=None,
-            min_soc=None,
-            max_soc=None,
-            grid_import_limit=None,
-            grid_export_limit=None,
+            setpoint=expected_parameters.get("setpoint"),
+            max_charge=expected_parameters.get("max_charge"),
+            max_discharge=expected_parameters.get("max_discharge"),
+            min_soc=expected_parameters.get("min_soc"),
+            max_soc=expected_parameters.get("max_soc"),
+            grid_import_limit=expected_parameters.get("grid_import_limit"),
+            grid_export_limit=expected_parameters.get("grid_export_limit"),
         )
         _LOGGER.debug("Sending battery control command: %s", command)
+        outcome_unknown: HomevoltCommandOutcomeUnknownError | None = None
         try:
             await self._post_console_command(command)
         except HomevoltCommandOutcomeUnknownError as err:
+            outcome_unknown = err
             try:
                 await self.fetch_schedule_data()
             except (HomevoltConnectionError, HomevoltDataError):
                 raise err
-            if self.schedule["mode"] == mode_int:
-                return
-            raise err
-        await self._fetch_schedule_after_mutation()
+        else:
+            await self._fetch_schedule_after_mutation()
         if self.schedule["mode"] != mode_int:
+            if outcome_unknown is not None:
+                raise outcome_unknown
             raise HomevoltCommandVerificationError(
                 f"Device reported mode {self.schedule['mode']} after requesting {mode_int}"
             )
+        for name, expected in expected_parameters.items():
+            if expected is not None and self.schedule[name] != expected:
+                if outcome_unknown is not None:
+                    raise outcome_unknown
+                raise HomevoltCommandVerificationError(
+                    f"Device reported {name} {self.schedule[name]}; expected {expected}"
+                )
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""

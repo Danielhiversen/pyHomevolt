@@ -150,11 +150,11 @@ does not create a matching manual schedule for them.
 
 Battery writes require local mode to be enabled first. `set_battery_mode()` uses the
 device's `sched_set` command, so it replaces the complete current schedule with one
-immediate `Manual Schedule` entry without carrying parameters from the previous
-mode. `set_battery_parameters()` only accepts independently verified parameters for
-that mode: `setpoint` for inverter charge/discharge and grid import/export limits
-for frequency reserve. Use `writable_battery_parameters` to discover the current
-set. Every mutation is read back from the device before success is reported.
+immediate `Manual Schedule` entry. Parameters independently verified for the target
+mode are preserved: `setpoint` for inverter charge/discharge and grid import/export
+limits for frequency reserve. Other parameters are omitted. Use
+`writable_battery_parameters` to discover the current set. Every mutation is read
+back from the device before success is reported.
 
 ## API Reference
 
