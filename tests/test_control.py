@@ -1018,10 +1018,11 @@ def test_set_battery_mode_preserves_compatible_grid_limits() -> None:
 
     client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
 
-    asyncio.run(client.set_battery_mode("frequency_reserve"))
+asyncio.run(client.set_battery_mode("frequency_reserve"))
 
-    client._post_console_command.assert_awaited_once_with("sched_set 6 -l 400 -x 500")
-
+client._post_console_command.assert_awaited_once_with("sched_set 6 -l 400 -x 500")
+assert client.schedule["grid_import_limit"] == 400
+assert client.schedule["grid_export_limit"] == 500
 
 def test_set_battery_mode_allows_lost_best_effort_parameter() -> None:
     """Report success when the mode changes but firmware drops a preserved setpoint."""
