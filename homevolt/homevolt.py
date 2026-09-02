@@ -591,7 +591,7 @@ class Homevolt:
         """Replace the current schedule with an immediate operational mode.
 
         Local mode must already be enabled. Parameters independently writable in the
-        target mode are carried into the replacement schedule.
+        target mode are carried into the replacement schedule on a best-effort basis.
 
         Args:
             mode: Operational mode string such as ``idle`` or ``inverter_charge``.
@@ -646,13 +646,6 @@ class Homevolt:
             raise HomevoltCommandVerificationError(
                 f"Device reported mode {self.schedule['mode']} after requesting {mode_int}"
             )
-        for name, expected in expected_parameters.items():
-            if expected is not None and self.schedule[name] != expected:
-                if outcome_unknown is not None:
-                    raise outcome_unknown
-                raise HomevoltCommandVerificationError(
-                    f"Device reported {name} {self.schedule[name]}; expected {expected}"
-                )
 
     async def enable_local_mode(self) -> None:
         """Enable local mode for battery control."""

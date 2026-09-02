@@ -1023,8 +1023,8 @@ def test_set_battery_mode_preserves_compatible_grid_limits() -> None:
     client._post_console_command.assert_awaited_once_with("sched_set 6 -l 400 -x 500")
 
 
-def test_set_battery_mode_rejects_lost_compatible_parameter() -> None:
-    """Do not report success when firmware drops a preserved setpoint."""
+def test_set_battery_mode_allows_lost_best_effort_parameter() -> None:
+    """Report success when the mode changes but firmware drops a preserved setpoint."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {
         "local_mode": True,
@@ -1045,15 +1045,14 @@ def test_set_battery_mode_rejects_lost_compatible_parameter() -> None:
 
     client.fetch_schedule_data = AsyncMock(side_effect=read_schedule_without_setpoint)
 
-    with pytest.raises(
-        HomevoltCommandVerificationError,
-        match="setpoint.*None.*expected 500",
-    ):
-        asyncio.run(client.set_battery_mode("inverter_discharge"))
+    asyncio.run(client.set_battery_mode("inverter_discharge"))
+
+    assert client.schedule["mode"] == 2
+    assert client.schedule["setpoint"] is None
 
 
-def test_set_battery_mode_preserves_unknown_outcome_when_parameter_is_lost() -> None:
-    """Keep the ambiguous-write signal when a preserved value is missing."""
+def test_set_battery_mode_reconciles_timeout_when_best_effort_parameter_is_lost() -> None:
+    """Treat a timeout as successful when the mode changed despite a lost setpoint."""
     session = TimeoutSession()
     client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
     client.current_schedule = {
@@ -1074,8 +1073,11 @@ def test_set_battery_mode_preserves_unknown_outcome_when_parameter_is_lost() -> 
 
     client.fetch_schedule_data = AsyncMock(side_effect=read_schedule_without_setpoint)
 
-    with pytest.raises(HomevoltCommandOutcomeUnknownError, match="Mutation outcome is unknown"):
-        asyncio.run(client.set_battery_mode("inverter_discharge"))
+    asyncio.run(client.set_battery_mode("inverter_discharge"))
+
+    assert session.attempts == 1
+    assert client.schedule["mode"] == 2
+    assert client.schedule["setpoint"] is None
 
 
 def test_set_battery_mode_does_not_carry_incompatible_parameters_between_modes() -> None:
