@@ -153,9 +153,9 @@ device's `sched_set` command, so it replaces the complete current schedule with 
 immediate `Manual Schedule` entry. Parameters independently verified for the target
 mode are preserved on a best-effort basis: `setpoint` for inverter charge/discharge
 and grid import/export limits for frequency reserve. Other parameters are omitted.
-Use `writable_battery_parameters` to discover the current set. Every mutation is
-read back from the device, and the requested mode must match before success is
-reported.
+Use `writable_battery_parameters` to discover the current set. Before reporting
+success, the mutation is read back from the device and the requested mode must
+match.
 
 ## API Reference
 
