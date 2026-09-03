@@ -952,7 +952,137 @@ def test_set_battery_mode_reconciles_timeout_with_device_state() -> None:
     assert client.schedule["mode"] == 1
 
 
-def test_set_battery_mode_does_not_carry_parameters_between_modes() -> None:
+def test_set_battery_mode_preserves_compatible_setpoint() -> None:
+    """Changing inverter direction retains the verified power setpoint."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 2, "params": {"setpoint": 500}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
+
+    asyncio.run(client.set_battery_mode("inverter_discharge"))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 2 -s 500")
+    assert client.schedule["setpoint"] == 500
+
+
+def test_set_battery_mode_preserves_compatible_grid_limits() -> None:
+    """Reapplying frequency-reserve mode retains verified grid limits."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [
+            {
+                "type": 6,
+                "params": {"import_limit": 400, "export_limit": 500},
+            }
+        ],
+    }
+    client.schedule.update(
+        {
+            "mode": 6,
+            "grid_import_limit": 400,
+            "grid_export_limit": 500,
+        }
+    )
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_updated_schedule() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [
+                    {
+                        "type": 6,
+                        "params": {"import_limit": 400, "export_limit": 500},
+                    }
+                ],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_updated_schedule)
+
+    asyncio.run(client.set_battery_mode("frequency_reserve"))
+
+    client._post_console_command.assert_awaited_once_with("sched_set 6 -l 400 -x 500")
+    assert client.schedule["grid_import_limit"] == 400
+    assert client.schedule["grid_export_limit"] == 500
+
+
+def test_set_battery_mode_allows_lost_best_effort_parameter() -> None:
+    """Report success when the mode changes but firmware drops a preserved setpoint."""
+    client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+    client._post_console_command = AsyncMock(return_value="Command executed successfully")
+
+    async def read_schedule_without_setpoint() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 2, "params": {}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_schedule_without_setpoint)
+
+    asyncio.run(client.set_battery_mode("inverter_discharge"))
+
+    assert client.schedule["mode"] == 2
+    assert client.schedule["setpoint"] is None
+
+
+def test_set_battery_mode_reconciles_timeout_when_best_effort_parameter_is_lost() -> None:
+    """Treat a timeout as successful when the mode changed despite a lost setpoint."""
+    session = TimeoutSession()
+    client = Homevolt("homevolt.local", websession=session)  # type: ignore[arg-type]
+    client.current_schedule = {
+        "local_mode": True,
+        "schedule_id": "Manual Schedule",
+        "schedule": [{"type": 1, "params": {"setpoint": 500}}],
+    }
+    client.schedule.update({"mode": 1, "setpoint": 500})
+
+    async def read_schedule_without_setpoint() -> None:
+        client._parse_schedule_data(
+            {
+                "local_mode": True,
+                "schedule_id": "Manual Schedule",
+                "schedule": [{"type": 2, "params": {}}],
+            }
+        )
+
+    client.fetch_schedule_data = AsyncMock(side_effect=read_schedule_without_setpoint)
+
+    asyncio.run(client.set_battery_mode("inverter_discharge"))
+
+    assert session.attempts == 1
+    assert client.schedule["mode"] == 2
+    assert client.schedule["setpoint"] is None
+
+
+def test_set_battery_mode_does_not_carry_incompatible_parameters_between_modes() -> None:
     """A mode change must not send stale or incompatible schedule parameters."""
     client = Homevolt("homevolt.local", websession=FakeSession())  # type: ignore[arg-type]
     client.current_schedule = {"local_mode": True, "schedule": [{}]}
